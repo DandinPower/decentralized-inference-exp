@@ -363,9 +363,9 @@ def eval_wikitext2_ppl(
 def run_ppl_eval(
     *,
     model_name: str = "Qwen/Qwen3-32B",
-    model_dir: str = "/root/cache/transformers/Qwen/Qwen3-32B",
+    model_dir: str = "/mnt/ssd/liaw/Qwen/Qwen3-32B",
     dtype: str = "fp16",
-    load_in_8bit: bool = False,
+    load_in_8bit: bool = True,
     load_in_4bit: bool = False,
     compressor: Union[str, "Compressor"] = "none",
     max_length: int = 2048,
@@ -409,6 +409,13 @@ def run_ppl_eval(
                 "batch_windows": batch_windows,
             },
         )
+
+    if not os.path.exists(model_dir):
+        # Only download if absolutely necessary. Repeated calls to snapshot_download 
+        # are safe but add unnecessary startup time/checks if you know the model is there.
+        print(f"Local model not found at {model_dir}. Downloading...")
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id=model_name, local_dir=model_dir)
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     model = load_model(model_dir, dtype, load_in_8bit=load8, load_in_4bit=load4)
@@ -491,13 +498,13 @@ def parse_args():
     p = argparse.ArgumentParser(description="WikiText2 PPL eval")
 
     # model / load
-    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-32B",
+    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-8B",
                     help="Just a label for logging/record; model is loaded from --model_dir")
-    p.add_argument("--model_dir", type=str, default="/root/cache/transformers/Qwen/Qwen3-32B",
+    p.add_argument("--model_dir", type=str, default="/mnt/ssd/liaw/Qwen/Qwen3-8B",
                     help="Local model directory to load tokenizer/model from")
 
     p.add_argument("--dtype", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
-    p.add_argument("--load_in_8bit", action="store_true", default=False)
+    p.add_argument("--load_in_8bit", action="store_true", default=True)
     p.add_argument("--load_in_4bit", action="store_true", default=False)
 
     # eval
