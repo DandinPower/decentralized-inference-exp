@@ -5,7 +5,7 @@ from pathlib import Path
 
 import bitsqueeze
 from compressor import Compressor, Payload, NoneCompressor
-from qwen3_double_route_eval_ppl import run_ppl_eval
+from qwen3_two_path_compression_eval_ppl import run_ppl_eval
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -136,7 +136,43 @@ if __name__ == "__main__":
         # residual_compressor=NoneCompressor(),
         batch_windows=2,
         first_k_tokens=0,
-        result_dir = f"results/{TEST_NAME}/topk_for_residual_{OUTLIER_RATIO}",
+        result_dir = f"results/{TEST_NAME}/topk_for_skip_{OUTLIER_RATIO}",
+    )
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    run_ppl_eval(
+        model_name=MODEL_NAME,
+        model_dir=MODEL_DIR,
+        wandb=False,
+        dtype = "fp16",
+        load_in_8bit = True,
+        norm_compressor=TopkCompressor(outlier_ratio=OUTLIER_RATIO),
+        # norm_compressor=NoneCompressor(),
+        # residual_compressor=TopkCompressor(outlier_ratio=OUTLIER_RATIO),
+        residual_compressor=NoneCompressor(),
+        batch_windows=2,
+        first_k_tokens=0,
+        result_dir = f"results/{TEST_NAME}/topk_for_norm_{OUTLIER_RATIO}",
+    )
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+        run_ppl_eval(
+        model_name=MODEL_NAME,
+        model_dir=MODEL_DIR,
+        wandb=False,
+        dtype = "fp16",
+        load_in_8bit = True,
+        # norm_compressor=TopkCompressor(outlier_ratio=OUTLIER_RATIO),
+        norm_compressor=NoneCompressor(),
+        # residual_compressor=TopkCompressor(outlier_ratio=OUTLIER_RATIO),
+        residual_compressor=NoneCompressor(),
+        batch_windows=2,
+        first_k_tokens=0,
+        result_dir = f"results/{TEST_NAME}/none_{OUTLIER_RATIO}",
     )
     gc.collect()
     if torch.cuda.is_available():

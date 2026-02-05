@@ -246,9 +246,9 @@ def install_boundary_hooks(model, boundaries: List[Tuple[str, str, str]], norm_p
             raise NotImplementedError("Didn't support embed output hook!")
         elif where.startswith("layer:"):
             i = int(where.split(":")[1]) + 1    # plus one because we inject hook on next layer input rather than current layer output
-            if i > 10:  # TEST, current loss maybe because i impact early layer?
-                handles.append(layers[i].input_layernorm.register_forward_pre_hook(make_norm_pre_hook(norm_pipeline, norm_key)))
-                handles.append(layers[i].attn_residual_add.register_forward_pre_hook(make_residual_pre_hook(residual_pipeline, residual_key)))
+            # if i > 10:  # TEST, current loss maybe because i impact early layer?
+            handles.append(layers[i].input_layernorm.register_forward_pre_hook(make_norm_pre_hook(norm_pipeline, norm_key)))
+            handles.append(layers[i].attn_residual_add.register_forward_pre_hook(make_residual_pre_hook(residual_pipeline, residual_key)))
     return handles
 
 def remove_hooks(handles):
