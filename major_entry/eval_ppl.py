@@ -10,89 +10,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm.auto import tqdm
 from huggingface_hub import snapshot_download
 
-from compressor import Compressor, NoneCompressor
+from major_entry.compressor import Compressor, NoneCompressor
 
 import argparse
 import json
 
-class ResidualAdd(torch.nn.Module):
-    """
-    A helper module to replace the "+" operator in residual connections.
-    This allows attaching hooks specifically to the residual merge step.
-    """
-    def forward(self, residual, hidden_states):
-        # args[0] = residual (skip connection)
-        # args[1] = hidden_states (processed output from Attn/MLP)
-        return residual + hidden_states
-
-def patch_qwen_with_residual_modules(model):
-    """
-    Monkey-patches the loaded Qwen model to use ResidualAdd modules
-    instead of python '+' operators for residual connections.
-    """
-    # 1. Identify the DecoderLayer class dynamically to avoid import errors
-    #    (Assumes model.model.layers is a ModuleList of the decoder layers)
-    if not hasattr(model, "model") or not hasattr(model.model, "layers"):
-        print("Warning: Could not find model.model.layers to patch. Skipping patch.")
-        return model
-    
-    layer_sample = model.model.layers[0]
-    decoder_layer_cls = layer_sample.__class__
-    print(f"Patching class: {decoder_layer_cls.__name__}")
-
-    # 2. Inject the helper modules into every existing layer instance
-    for name, module in model.named_modules():
-        if isinstance(module, decoder_layer_cls):
-            # We add them as submodules so they register properly
-            module.add_module("attn_residual_add", ResidualAdd())
-
-    # 3. Define the custom forward function that uses these new modules
-    #    We use generic type hints to match the imports available in this script
-    def custom_forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Any] = None,
-        use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        
-        residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-
-        # Self Attention
-        hidden_states, _ = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            position_embeddings=position_embeddings,
-            **kwargs,
-        )
-        
-        # --- PATCH : Use module instead of "hidden_states = residual + hidden_states" ---
-        hidden_states = self.attn_residual_add(residual, hidden_states)
-
-        # Fully Connected
-        residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        
-        hidden_states = residual + hidden_states
-        
-        return hidden_states
-
-    # 4. Apply the monkey patch to the CLASS
-    #    This affects all instances of this class
-    decoder_layer_cls.forward = custom_forward
-    
-    return model
-# --- END PATCHING LOGIC ---
 
 
 def format_bytes(n: float, binary: bool = False) -> str:
@@ -196,59 +118,33 @@ class Pipeline:
         self.meter.record(key, p.nbytes, ntokens)
         return self.compressor.decompress(p, x.device, x.dtype)
 
-def make_norm_pre_hook(pipeline: Pipeline, key: str):
-    """
-    Pre-hook for LayerNorm. 
-    Input args: (hidden_states,)
-    We compress hidden_states before it enters the norm.
-    """
-    def _hook(module, args):
-        hs = args[0]
-        if not torch.is_tensor(hs):
-            return args
+def make_hook(pipeline: Pipeline, key: str):
+    def _hook(module, inp, out):
+        if torch.is_tensor(out):
+            hs, pack = out, (lambda new: new)
+        elif isinstance(out, tuple) and out and torch.is_tensor(out[0]):
+            hs, pack = out[0], (lambda new: (new,) + out[1:])
+        else:
+            return out
+
         if hs.dim() >= 2:
             ntokens = int(hs.shape[0] * hs.shape[1])
         else:
-            return args
-        processed_hs = pipeline.run(hs, key=key, ntokens=ntokens)
-        return (processed_hs,) + args[1:]
+            raise ValueError(f"Unrecognized hidden state of shape {hs.shape}, will lead to wrong token count.")
+        return pack(pipeline.run(hs, key=key, ntokens=ntokens))
     return _hook
 
-def make_residual_pre_hook(pipeline: Pipeline, key: str):
-    """
-    Pre-hook for ResidualAdd.
-    Input args: (residual, hidden_states)
-    We ONLY compress 'residual' (the skip connection). 
-    'hidden_states' (the main branch) is left alone.
-    """
-    def _hook(module, args):
-        residual = args[0]
-        current_hidden_states = args[1]
-        if not torch.is_tensor(residual):
-            return args
-        if residual.dim() >= 2:
-            ntokens = int(residual.shape[0] * residual.shape[1])
-        else:
-            return args
-        processed_residual = pipeline.run(residual, key=key, ntokens=0) # keep on pipeline, ntokens = 0 to avoid duplicate calculating.
-        return (processed_residual, current_hidden_states)
-    return _hook
-
-def install_boundary_hooks(model, boundaries: List[Tuple[str, str, str]], norm_pipeline: Pipeline, residual_pipeline: Pipeline):
+def install_boundary_hooks(model, boundaries: List[Tuple[str, str, str]], pipeline: Pipeline):
     handles = []
     embed = model.model.embed_tokens
     layers = model.model.layers
     for where, src, dst in boundaries:
-        norm_key = f"{where}:{src}->{dst}:{norm_pipeline.compressor.name}"
-        residual_key = f"{where}:{src}->{dst}:{residual_pipeline.compressor.name}"
+        key = f"{where}:{src}->{dst}:{pipeline.compressor.name}"
         if where == "embed":
-            # handles.append(embed.register_forward_hook(make_hook(pipeline, key)))
-            raise NotImplementedError("Didn't support embed output hook!")
+            handles.append(embed.register_forward_hook(make_hook(pipeline, key)))
         elif where.startswith("layer:"):
-            i = int(where.split(":")[1]) + 1    # plus one because we inject hook on next layer input rather than current layer output
-            # if i > 10:  # TEST, current loss maybe because i impact early layer?
-            handles.append(layers[i].input_layernorm.register_forward_pre_hook(make_norm_pre_hook(norm_pipeline, norm_key)))
-            handles.append(layers[i].attn_residual_add.register_forward_pre_hook(make_residual_pre_hook(residual_pipeline, residual_key)))
+            i = int(where.split(":")[1])
+            handles.append(layers[i].register_forward_hook(make_hook(pipeline, key)))
     return handles
 
 def remove_hooks(handles):
@@ -471,8 +367,7 @@ def run_ppl_eval(
     dtype: str = "fp16",
     load_in_8bit: bool = True,
     load_in_4bit: bool = False,
-    norm_compressor: Union[str, "Compressor"] = "none",
-    residual_compressor: Union[str, "Compressor"] = "none",
+    compressor: Union[str, "Compressor"] = "none",
     max_length: int = 2048,
     stride: int = 512,
     first_k_tokens: int = 0,
@@ -483,6 +378,13 @@ def run_ppl_eval(
     wandb_log_every: int = 10,
     result_dir: Optional[str] = None,
 ):
+    # 允许传字符串(走默认) 或 传自定义实例
+    if isinstance(compressor, str):
+        comp = make_compressor(compressor)
+    else:
+        comp = compressor
+        if not isinstance(comp, Compressor):
+            raise TypeError(f"compressor must be str or Compressor, got: {type(comp)}")
 
     load4 = bool(load_in_4bit)
     load8 = bool(load_in_8bit) and (not load4)
@@ -518,35 +420,17 @@ def run_ppl_eval(
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     model = load_model(model_dir, dtype, load_in_8bit=load8, load_in_4bit=load4)
 
-    model = patch_qwen_with_residual_modules(model)
-
     num_layers = len(model.model.layers)
     embed_node, layer_to_node, output_node = make_default_plan(num_layers)
     boundaries = find_boundaries(embed_node, layer_to_node, output_node)
 
     print(boundaries)
+    # boundaries = boundaries[:2]
+    # print(boundaries)
 
     meter = TrafficMeter()
-    if isinstance(norm_compressor, str):
-        comp = make_compressor(norm_compressor)
-    else:
-        comp = norm_compressor
-        if not isinstance(comp, Compressor):
-            raise TypeError(f"compressor must be str or Compressor, got: {type(comp)}")
-    norm_pipeline = Pipeline(comp, meter)
-
-    if isinstance(residual_compressor, str):
-        comp = make_compressor(residual_compressor)
-    else:
-        comp = residual_compressor
-        if not isinstance(comp, Compressor):
-            raise TypeError(f"compressor must be str or Compressor, got: {type(comp)}")
-
-    residual_pipeline = Pipeline(comp, meter)
-
-
-
-    handles = install_boundary_hooks(model, boundaries, norm_pipeline, residual_pipeline)
+    pipeline = Pipeline(comp, meter)
+    handles = install_boundary_hooks(model, boundaries, pipeline)
 
     t0 = time.time()
     ppl, total_nll, total_loss_tokens = eval_wikitext2_ppl(

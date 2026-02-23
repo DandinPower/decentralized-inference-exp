@@ -12,7 +12,7 @@ import gc
 
 import torch
 
-from compressor import Compressor, Payload
+from major_entry.compressor import Compressor, Payload
 from eval_ppl import run_ppl_eval
 
 

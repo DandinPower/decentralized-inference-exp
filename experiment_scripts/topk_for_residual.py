@@ -4,7 +4,7 @@ import gc
 from pathlib import Path
 
 import bitsqueeze
-from compressor import Compressor, Payload, NoneCompressor
+from major_entry.compressor import Compressor, Payload, NoneCompressor
 from qwen3_two_path_compression_eval_ppl import run_ppl_eval
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

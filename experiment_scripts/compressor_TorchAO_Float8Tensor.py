@@ -11,29 +11,42 @@ from pathlib import Path
 
 import torch
 
+from torchao.quantization.quantize_.workflows import Float8Tensor
+
 # Ensure repo-root imports work no matter where you run this from.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from compressor import Compressor, Payload  # noqa: E402
+from major_entry.compressor import Compressor, Payload  # noqa: E402
 from eval_ppl import run_ppl_eval  # noqa: E402
 
+def get_torchAOTensor_nbytes(t):
+    """
+    only tensors are 
+    """
+    total = 0
+    for v in t.__dict__.values():
+        if isinstance(v, torch.Tensor):
+            total += v.element_size() * v.numel()
+    return total
 
-class NoneCompressor(Compressor):
+
+class TorchAO_Float8Tensor_Compressor(Compressor):
     name = "none"
     def compress(self, x: torch.Tensor) -> Payload:
-        return Payload(x, {}, x.numel() * x.element_size())
+        x_lp = Float8Tensor.from_hp(x)
+        return Payload(x_lp, {}, get_torchAOTensor_nbytes(x_lp))
     def decompress(self, p: Payload, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        return p.data.to(device=device)
+        return p.data.dequantize().to(device = device, dtype = dtype)
 
 for k in [10000, 20000, 50000, 100000, 0]:
     run_ppl_eval(
-        wandb_run_name = f"NoneCompressor_bf16_{k}",
+        wandb_run_name = f"TorchAO_Float8Tensor_Compressor_{k}",
         dtype = "bf16",
         load_in_8bit = True,
-        compressor=NoneCompressor(),
+        compressor=TorchAO_Float8Tensor_Compressor(),
         first_k_tokens=k,
-        result_dir = str(REPO_ROOT / "results" / "compressor_none_bf16"),
+        result_dir = str(REPO_ROOT / "results" / "compressor_TorchAO_Float8Tensor"),
     )
     gc.collect()
     if torch.cuda.is_available():
