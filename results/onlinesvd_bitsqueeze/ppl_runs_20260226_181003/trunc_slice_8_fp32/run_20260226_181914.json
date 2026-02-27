@@ -1,0 +1,52 @@
+{
+  "script_name": "eval_ppl.py",
+  "run_id": "20260226_181914",
+  "timestamp_local": "2026-02-26 18:19:14",
+  "time_run_s": 520.374525308609,
+  "time_run_hms": "8m 40s",
+  "args": {
+    "model_name": "Qwen/Qwen3-8B",
+    "model_dir": "/mnt/ssd/liaw/Qwen/Qwen3-8B",
+    "dtype": "bf16",
+    "load_in_8bit": true,
+    "load_in_4bit": false,
+    "compressor": "OnlineSVDBitSqueeze_trunc_slice_8_fp32",
+    "max_length": 2048,
+    "stride": 512,
+    "first_k_tokens": 0,
+    "batch_windows": 2
+  },
+  "results": {
+    "avg_ppl": 3891.4133989040715,
+    "total_nll": 2472328.30859375,
+    "total_loss_tokens": 299077
+  },
+  "traffic_totals": {
+    "total_bytes": 457777920.0,
+    "total_tokens": 4767744.0,
+    "total_tx": 1164.0,
+    "bytes_per_token": 96.015625
+  },
+  "traffic_per_link": {
+    "layer:3:node0->node1:OnlineSVDBitSqueeze_trunc_slice_8_fp32": {
+      "bytes": 114444480,
+      "tokens": 1191936,
+      "tx": 291
+    },
+    "layer:12:node1->node2:OnlineSVDBitSqueeze_trunc_slice_8_fp32": {
+      "bytes": 114444480,
+      "tokens": 1191936,
+      "tx": 291
+    },
+    "layer:21:node2->node3:OnlineSVDBitSqueeze_trunc_slice_8_fp32": {
+      "bytes": 114444480,
+      "tokens": 1191936,
+      "tx": 291
+    },
+    "layer:30:node3->node0:OnlineSVDBitSqueeze_trunc_slice_8_fp32": {
+      "bytes": 114444480,
+      "tokens": 1191936,
+      "tx": 291
+    }
+  }
+}
