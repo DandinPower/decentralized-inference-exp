@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot Pareto frontier comparison between trunc_approx and trunc_slice (B/tok vs ppl)."""
+"""Plot Pareto frontier comparison between experiment modes (B/tok vs ppl)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,63 @@ import matplotlib.pyplot as plt
 SERIES_STYLES = {
     "trunc_approx": {
         "scatter": "#9ec9ff",  # light blue
-        "line": "#1f77b4",     # blue
+        "line": "#1f77b4",  # blue
     },
     "trunc_slice": {
         "scatter": "#ffb3b3",  # light red
-        "line": "#d62728",     # red
+        "line": "#d62728",  # red
+    },
+    # Custom experiment families for the 5 requested curves.
+    "bitsqz_topk_0_005": {
+        "scatter": "#1f77b4",
+        "line": "#1f77b4",
+    },
+    "bitsqz_topk_0_001": {
+        "scatter": "#ff7f0e",
+        "line": "#ff7f0e",
+    },
+    "bitsqz": {
+        "scatter": "#2ca02c",
+        "line": "#2ca02c",
+    },
+    "bitsqz_only": {
+        "scatter": "#d62728",
+        "line": "#d62728",
+    },
+    "bitsqz_only_topk_0_001": {
+        "scatter": "#9467bd",
+        "line": "#9467bd",
     },
 }
+
+SERIES_LABELS = {
+    "trunc_approx": "trunc approx",
+    "trunc_slice": "trunc slice",
+    "bitsqz_topk_0_005": "SVD + BitSqz + Topk (0.005)",
+    "bitsqz_topk_0_001": "SVD + BitSqz + Topk (0.001)",
+    "bitsqz": "SVD + BitSqz",
+    "bitsqz_only": "BitSqz",
+    "bitsqz_only_topk_0_001": "BitSqz + Topk (0.001)",
+}
+
+FALLBACK_SERIES_COLORS = [
+    "#17becf",
+    "#e377c2",
+    "#7f7f7f",
+    "#8c564b",
+    "#bcbd22",
+]
+
+
+def series_style(series_name: str, fallback_index: int) -> dict[str, str]:
+    if series_name in SERIES_STYLES:
+        return SERIES_STYLES[series_name]
+    color = FALLBACK_SERIES_COLORS[fallback_index % len(FALLBACK_SERIES_COLORS)]
+    return {"scatter": color, "line": color}
+
+
+def series_label(series_name: str) -> str:
+    return SERIES_LABELS.get(series_name, series_name)
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,13 +78,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=Path("results/onlinesvd_bitsqueeze/onlinesvd_bitsqueeze_ppl_20260226_221024.csv"),
+        default=Path(
+            "results/onlinesvd_bitsqueeze/onlinesvd_bitsqueeze_ppl_20260226_221024.csv"
+        ),
         help="Path to results CSV.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("results/onlinesvd_bitsqueeze/pareto_frontier_trunc_approx_vs_trunc_slice_rank512_s-fp32_btok-vs-ppl.png"),
+        default=Path(
+            "results/onlinesvd_bitsqueeze/pareto_frontier_trunc_approx_vs_trunc_slice_rank512_s-fp32_btok-vs-ppl.png"
+        ),
         help="Output figure path (.png/.pdf/etc).",
     )
     parser.add_argument(
@@ -89,7 +143,9 @@ def to_float(value: str) -> float:
         return math.nan
 
 
-def pareto_frontier(points: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
+def pareto_frontier(
+    points: list[dict[str, float | str]],
+) -> list[dict[str, float | str]]:
     # Minimize both x (b_tok) and y (avg_ppl).
     ordered = sorted(points, key=lambda p: (p["b_tok"], p["avg_ppl"], p["uv_format"]))
     frontier: list[dict[str, float | str]] = []
@@ -142,7 +198,8 @@ def main() -> None:
             )
 
         selected = [
-            p for p in selected
+            p
+            for p in selected
             if (
                 math.isfinite(float(p["b_tok"]))
                 and math.isfinite(float(p["eval_time_s"]))
@@ -166,15 +223,17 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(9, 6), dpi=200)
 
-    for mode in requested_modes:
+    for mode_idx, mode in enumerate(requested_modes):
         points = grouped[mode]
         frontier = frontiers[mode]
-        style = SERIES_STYLES.get(mode, {"scatter": "#cccccc", "line": "#333333"})
+        style = series_style(mode, mode_idx)
 
         x_all = [float(p["b_tok"]) for p in points]
         y_all = [float(p["avg_ppl"]) for p in points]
         x_pf = [float(p["b_tok"]) for p in frontier]
         y_pf = [float(p["avg_ppl"]) for p in frontier]
+
+        display_name = series_label(mode)
 
         ax.scatter(
             x_all,
@@ -183,7 +242,7 @@ def main() -> None:
             color=style["scatter"],
             edgecolors="black",
             linewidths=0.5,
-            label=f"{mode} (all uv_format)",
+            label="_nolegend_",
             zorder=2,
         )
         ax.plot(
@@ -193,16 +252,16 @@ def main() -> None:
             linewidth=2.2,
             marker="o",
             markersize=5.5,
-            label=f"{mode} Pareto frontier",
+            label=display_name,
             zorder=3,
         )
 
-        for idx, point in enumerate(frontier):
+        for frontier_idx, point in enumerate(frontier):
             x = float(point["b_tok"])
             y = float(point["avg_ppl"])
             ppl_label = f"{y:.5f}"
-            x_off = 7 if mode == "trunc_approx" else -7
-            y_off = 8 if idx % 2 == 0 else -10
+            x_off = 7 if mode_idx % 2 == 0 else -7
+            y_off = 8 if frontier_idx % 2 == 0 else -10
             ax.annotate(
                 ppl_label,
                 xy=(x, y),
@@ -212,11 +271,18 @@ def main() -> None:
                 color=style["line"],
                 ha="left" if x_off > 0 else "right",
                 va="bottom" if y_off > 0 else "top",
-                bbox={"boxstyle": "round,pad=0.15", "fc": "white", "ec": "none", "alpha": 0.75},
+                bbox={
+                    "boxstyle": "round,pad=0.15",
+                    "fc": "white",
+                    "ec": "none",
+                    "alpha": 0.75,
+                },
                 zorder=4,
             )
 
-    ax.set_title(f"Pareto Frontier: trunc_approx vs trunc_slice (rank={args.rank}, s_format={args.s_format})")
+    ax.set_title(
+        f"Pareto frontiers by mode (rank={args.rank}, s_format={args.s_format})"
+    )
     ax.set_xlabel("B/tok (bytes per token, lower is better)")
     ax.set_ylabel("avg_ppl (lower is better)")
     if y_range is not None:

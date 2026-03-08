@@ -15,15 +15,18 @@ from major_entry.compressor import Compressor, NoneCompressor
 import argparse
 import json
 
+
 class ResidualAdd(torch.nn.Module):
     """
     A helper module to replace the "+" operator in residual connections.
     This allows attaching hooks specifically to the residual merge step.
     """
+
     def forward(self, residual, hidden_states):
         # args[0] = residual (skip connection)
         # args[1] = hidden_states (processed output from Attn/MLP)
         return residual + hidden_states
+
 
 def patch_qwen_with_residual_modules(model):
     """
@@ -35,7 +38,7 @@ def patch_qwen_with_residual_modules(model):
     if not hasattr(model, "model") or not hasattr(model.model, "layers"):
         print("Warning: Could not find model.model.layers to patch. Skipping patch.")
         return model
-    
+
     layer_sample = model.model.layers[0]
     decoder_layer_cls = layer_sample.__class__
     print(f"Patching class: {decoder_layer_cls.__name__}")
@@ -59,7 +62,6 @@ def patch_qwen_with_residual_modules(model):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -74,7 +76,7 @@ def patch_qwen_with_residual_modules(model):
             position_embeddings=position_embeddings,
             **kwargs,
         )
-        
+
         # --- PATCH : Use module instead of "hidden_states = residual + hidden_states" ---
         hidden_states = self.attn_residual_add(residual, hidden_states)
 
@@ -82,16 +84,18 @@ def patch_qwen_with_residual_modules(model):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
-        
+
         hidden_states = residual + hidden_states
-        
+
         return hidden_states
 
     # 4. Apply the monkey patch to the CLASS
     #    This affects all instances of this class
     decoder_layer_cls.forward = custom_forward
-    
+
     return model
+
+
 # --- END PATCHING LOGIC ---
 
 
@@ -105,7 +109,11 @@ def format_bytes(n: float, binary: bool = False) -> str:
         return "-" + format_bytes(-n, binary)
 
     base = 1024 if binary else 1000
-    suffixes = ["B", "K", "M", "G", "T", "P"] if not binary else ["B", "Ki", "Mi", "Gi", "Ti", "Pi"]
+    suffixes = (
+        ["B", "K", "M", "G", "T", "P"]
+        if not binary
+        else ["B", "Ki", "Mi", "Gi", "Ti", "Pi"]
+    )
 
     for suf in suffixes:
         if n < base:
@@ -119,20 +127,26 @@ def format_duration(seconds: float) -> str:
     total = int(seconds)
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
-    if h > 0: return f"{h:d}h {m:02d}m {s:02d}s"
-    if m > 0: return f"{m:d}m {s:02d}s"
+    if h > 0:
+        return f"{h:d}h {m:02d}m {s:02d}s"
+    if m > 0:
+        return f"{m:d}m {s:02d}s"
     return f"{s:d}s {ms:03d}ms"
+
 
 def _dtype_from_str(s: str) -> torch.dtype:
     return {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}[s]
 
 
-def load_model(model_id_or_path: str, dtype_str: str, load_in_8bit: bool, load_in_4bit: bool):
+def load_model(
+    model_id_or_path: str, dtype_str: str, load_in_8bit: bool, load_in_4bit: bool
+):
     dtype = _dtype_from_str(dtype_str)
     kwargs = {"device_map": "auto"} if torch.cuda.is_available() else {}
 
     if load_in_4bit or load_in_8bit:
         from transformers import BitsAndBytesConfig
+
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_8bit=bool(load_in_8bit),
             load_in_4bit=bool(load_in_4bit),
@@ -144,11 +158,21 @@ def load_model(model_id_or_path: str, dtype_str: str, load_in_8bit: bool, load_i
 
     return AutoModelForCausalLM.from_pretrained(model_id_or_path, **kwargs)
 
+
 def make_compressor(name: str) -> Compressor:
     name = name.lower()
-    if name in ("none"):
+    if name in ("none",):
         return NoneCompressor()
     raise ValueError(f"Unknown compressor: {name}")
+
+
+def _resolve_compressor(spec: Union[str, "Compressor"], param_name: str) -> Compressor:
+    if isinstance(spec, str):
+        return make_compressor(spec)
+    if isinstance(spec, Compressor):
+        return spec
+    raise TypeError(f"{param_name} must be str or Compressor, got: {type(spec)}")
+
 
 class TrafficMeter:
     def __init__(self):
@@ -172,7 +196,11 @@ class TrafficMeter:
         self.total_tx += 1
 
     def totals(self) -> Dict[str, float]:
-        bpt = (self.total_bytes / self.total_tokens) if self.total_tokens else float("nan")
+        bpt = (
+            (self.total_bytes / self.total_tokens)
+            if self.total_tokens
+            else float("nan")
+        )
         return {
             "total_bytes": float(self.total_bytes),
             "total_tokens": float(self.total_tokens),
@@ -186,6 +214,7 @@ class TrafficMeter:
         self.total_tokens = 0
         self.total_tx = 0
 
+
 class Pipeline:
     def __init__(self, compressor: Compressor, meter: TrafficMeter):
         self.compressor = compressor
@@ -196,12 +225,14 @@ class Pipeline:
         self.meter.record(key, p.nbytes, ntokens)
         return self.compressor.decompress(p, x.device, x.dtype)
 
+
 def make_norm_pre_hook(pipeline: Pipeline, key: str):
     """
-    Pre-hook for LayerNorm. 
+    Pre-hook for LayerNorm.
     Input args: (hidden_states,)
     We compress hidden_states before it enters the norm.
     """
+
     def _hook(module, args):
         hs = args[0]
         if not torch.is_tensor(hs):
@@ -212,15 +243,18 @@ def make_norm_pre_hook(pipeline: Pipeline, key: str):
             return args
         processed_hs = pipeline.run(hs, key=key, ntokens=ntokens)
         return (processed_hs,) + args[1:]
+
     return _hook
+
 
 def make_residual_pre_hook(pipeline: Pipeline, key: str):
     """
     Pre-hook for ResidualAdd.
     Input args: (residual, hidden_states)
-    We ONLY compress 'residual' (the skip connection). 
+    We ONLY compress 'residual' (the skip connection).
     'hidden_states' (the main branch) is left alone.
     """
+
     def _hook(module, args):
         residual = args[0]
         current_hidden_states = args[1]
@@ -230,11 +264,20 @@ def make_residual_pre_hook(pipeline: Pipeline, key: str):
             ntokens = int(residual.shape[0] * residual.shape[1])
         else:
             return args
-        processed_residual = pipeline.run(residual, key=key, ntokens=0) # keep on pipeline, ntokens = 0 to avoid duplicate calculating.
+        processed_residual = pipeline.run(
+            residual, key=key, ntokens=0
+        )  # keep on pipeline, ntokens = 0 to avoid duplicate calculating.
         return (processed_residual, current_hidden_states)
+
     return _hook
 
-def install_boundary_hooks(model, boundaries: List[Tuple[str, str, str]], norm_pipeline: Pipeline, residual_pipeline: Pipeline):
+
+def install_boundary_hooks(
+    model,
+    boundaries: List[Tuple[str, str, str]],
+    norm_pipeline: Pipeline,
+    residual_pipeline: Pipeline,
+):
     handles = []
     embed = model.model.embed_tokens
     layers = model.model.layers
@@ -245,15 +288,27 @@ def install_boundary_hooks(model, boundaries: List[Tuple[str, str, str]], norm_p
             # handles.append(embed.register_forward_hook(make_hook(pipeline, key)))
             raise NotImplementedError("Didn't support embed output hook!")
         elif where.startswith("layer:"):
-            i = int(where.split(":")[1]) + 1    # plus one because we inject hook on next layer input rather than current layer output
+            i = (
+                int(where.split(":")[1]) + 1
+            )  # plus one because we inject hook on next layer input rather than current layer output
             # if i > 10:  # TEST, current loss maybe because i impact early layer?
-            handles.append(layers[i].input_layernorm.register_forward_pre_hook(make_norm_pre_hook(norm_pipeline, norm_key)))
-            handles.append(layers[i].attn_residual_add.register_forward_pre_hook(make_residual_pre_hook(residual_pipeline, residual_key)))
+            handles.append(
+                layers[i].input_layernorm.register_forward_pre_hook(
+                    make_norm_pre_hook(norm_pipeline, norm_key)
+                )
+            )
+            handles.append(
+                layers[i].attn_residual_add.register_forward_pre_hook(
+                    make_residual_pre_hook(residual_pipeline, residual_key)
+                )
+            )
     return handles
+
 
 def remove_hooks(handles):
     for h in handles:
         h.remove()
+
 
 def _input_device(model) -> torch.device:
     try:
@@ -261,12 +316,13 @@ def _input_device(model) -> torch.device:
     except Exception:
         return next(model.parameters()).device
 
+
 def make_default_plan(num_layers: int):
     if num_layers <= 0:
         raise ValueError(f"num_layers must be > 0, got {num_layers}")
     embed_node = output_node = "node0"
     base = num_layers // 4
-    rem  = num_layers % 4
+    rem = num_layers % 4
     c0 = base
     c1 = base + (1 if rem >= 1 else 0)
     c2 = base + (1 if rem >= 2 else 0)
@@ -281,12 +337,16 @@ def make_default_plan(num_layers: int):
     mid = [i for i, v in enumerate(layer_to_node) if not v]
     k = 0
     for _ in range(c1):
-        layer_to_node[mid[k]] = "node1"; k += 1
+        layer_to_node[mid[k]] = "node1"
+        k += 1
     for _ in range(c2):
-        layer_to_node[mid[k]] = "node2"; k += 1
+        layer_to_node[mid[k]] = "node2"
+        k += 1
     for _ in range(c3):
-        layer_to_node[mid[k]] = "node3"; k += 1
+        layer_to_node[mid[k]] = "node3"
+        k += 1
     return embed_node, layer_to_node, output_node
+
 
 def find_boundaries(embed_node, layer_to_node, output_node):
     b = []
@@ -313,9 +373,9 @@ def eval_wikitext2_ppl(
     wandb_run: Optional[Any] = None,
     max_length: int = 2048,
     stride: int = 512,
-    log_every: int = 1,          # 每 N 个 batch log 一次
+    log_every: int = 1,  # 每 N 个 batch log 一次
     first_k_tokens: int = 0,
-    batch_windows: int = 1,      # 每个 batch 包含多少个 window
+    batch_windows: int = 1,  # 每个 batch 包含多少个 window
 ):
     """
     Batch-able WikiText2 perplexity evaluation.
@@ -363,7 +423,7 @@ def eval_wikitext2_ppl(
     pbar = tqdm(batch_starts, desc="wikitext2 ppl", unit="batch")
 
     for batch_idx, batch_start in enumerate(pbar):
-        batch = windows[batch_start: batch_start + batch_windows]
+        batch = windows[batch_start : batch_start + batch_windows]
         B = len(batch)
         if B == 0:
             break
@@ -393,12 +453,12 @@ def eval_wikitext2_ppl(
         out = model(input_ids=x, attention_mask=attn, use_cache=False)
         logits = out.logits  # [B, L, V]
 
-        shift_logits = logits[:, :-1, :]   # [B, L-1, V]
-        shift_labels = y[:, 1:]            # [B, L-1]
-        valid_mask = (shift_labels != -100)
+        shift_logits = logits[:, :-1, :]  # [B, L-1, V]
+        shift_labels = y[:, 1:]  # [B, L-1]
+        valid_mask = shift_labels != -100
 
-        shift_logits = logits[:, :-1, :]          # [B, L-1, V]
-        shift_labels = y[:, 1:]                   # [B, L-1]
+        shift_logits = logits[:, :-1, :]  # [B, L-1, V]
+        shift_labels = y[:, 1:]  # [B, L-1]
 
         V = shift_logits.size(-1)
         loss_flat = F.cross_entropy(
@@ -421,7 +481,11 @@ def eval_wikitext2_ppl(
             batch_avg_nll = float("nan")
             batch_ppl = float("nan")
 
-        avg_ppl = math.exp(total_nll / total_loss_tokens) if total_loss_tokens > 0 else float("nan")
+        avg_ppl = (
+            math.exp(total_nll / total_loss_tokens)
+            if total_loss_tokens > 0
+            else float("nan")
+        )
 
         traffic = meter.totals() if meter is not None else None
 
@@ -437,30 +501,41 @@ def eval_wikitext2_ppl(
         pbar.set_postfix(postfix)
 
         # wandb：每 N 个 batch log 一次
-        if wandb_run is not None and log_every > 0 and ((batch_idx + 1) % log_every == 0):
+        if (
+            wandb_run is not None
+            and log_every > 0
+            and ((batch_idx + 1) % log_every == 0)
+        ):
             log_dict = {
                 "eval_batch/batch_idx": batch_idx,
                 "eval_batch/batch_tokens": batch_tok,
                 "eval_batch/batch_avg_nll": batch_avg_nll,
                 "eval_batch/batch_ppl": batch_ppl,
-
                 "eval_total/total_tokens": total_loss_tokens,
                 "eval_total/total_nll": total_nll,
-                "eval_total/total_avg_nll": (total_nll / total_loss_tokens) if total_loss_tokens > 0 else float("nan"),
+                "eval_total/total_avg_nll": (total_nll / total_loss_tokens)
+                if total_loss_tokens > 0
+                else float("nan"),
                 "eval_total/total_avg_ppl": avg_ppl,
             }
             if traffic is not None:
-                log_dict.update({
-                    "traffic/total_bytes": traffic["total_bytes"],
-                    "traffic/total_tokens": traffic["total_tokens"],
-                    "traffic/total_tx": traffic["total_tx"],
-                    "traffic/bytes_per_token": traffic["bytes_per_token"],
-                })
+                log_dict.update(
+                    {
+                        "traffic/total_bytes": traffic["total_bytes"],
+                        "traffic/total_tokens": traffic["total_tokens"],
+                        "traffic/total_tx": traffic["total_tx"],
+                        "traffic/bytes_per_token": traffic["bytes_per_token"],
+                    }
+                )
 
             # 关键：wandb step 用 batch_idx（0,1,2,3...）
             wandb_run.log(log_dict, step=batch_idx)
 
-    ppl = math.exp(total_nll / total_loss_tokens) if total_loss_tokens > 0 else float("nan")
+    ppl = (
+        math.exp(total_nll / total_loss_tokens)
+        if total_loss_tokens > 0
+        else float("nan")
+    )
     return ppl, total_nll, total_loss_tokens
 
 
@@ -483,13 +558,16 @@ def run_ppl_eval(
     wandb_log_every: int = 10,
     result_dir: Optional[str] = None,
 ):
-
     load4 = bool(load_in_4bit)
     load8 = bool(load_in_8bit) and (not load4)
+
+    norm_comp = _resolve_compressor(norm_compressor, "norm_compressor")
+    residual_comp = _resolve_compressor(residual_compressor, "residual_compressor")
 
     wandb_run = None
     if wandb:
         import wandb as _wandb
+
         wandb_run = _wandb.init(
             project=wandb_project,
             name=wandb_run_name,
@@ -500,7 +578,8 @@ def run_ppl_eval(
                 "dtype": dtype,
                 "load_in_8bit": load8,
                 "load_in_4bit": load4,
-                "compressor": comp.name,
+                "norm_compressor": norm_comp.name,
+                "residual_compressor": residual_comp.name,
                 "max_length": max_length,
                 "stride": stride,
                 "first_k_tokens": first_k_tokens,
@@ -509,10 +588,11 @@ def run_ppl_eval(
         )
 
     if not os.path.exists(model_dir):
-        # Only download if absolutely necessary. Repeated calls to snapshot_download 
+        # Only download if absolutely necessary. Repeated calls to snapshot_download
         # are safe but add unnecessary startup time/checks if you know the model is there.
         print(f"Local model not found at {model_dir}. Downloading...")
         from huggingface_hub import snapshot_download
+
         snapshot_download(repo_id=model_name, local_dir=model_dir)
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
@@ -527,26 +607,12 @@ def run_ppl_eval(
     print(boundaries)
 
     meter = TrafficMeter()
-    if isinstance(norm_compressor, str):
-        comp = make_compressor(norm_compressor)
-    else:
-        comp = norm_compressor
-        if not isinstance(comp, Compressor):
-            raise TypeError(f"compressor must be str or Compressor, got: {type(comp)}")
-    norm_pipeline = Pipeline(comp, meter)
+    norm_pipeline = Pipeline(norm_comp, meter)
+    residual_pipeline = Pipeline(residual_comp, meter)
 
-    if isinstance(residual_compressor, str):
-        comp = make_compressor(residual_compressor)
-    else:
-        comp = residual_compressor
-        if not isinstance(comp, Compressor):
-            raise TypeError(f"compressor must be str or Compressor, got: {type(comp)}")
-
-    residual_pipeline = Pipeline(comp, meter)
-
-
-
-    handles = install_boundary_hooks(model, boundaries, norm_pipeline, residual_pipeline)
+    handles = install_boundary_hooks(
+        model, boundaries, norm_pipeline, residual_pipeline
+    )
 
     t0 = time.time()
     ppl, total_nll, total_loss_tokens = eval_wikitext2_ppl(
@@ -565,7 +631,11 @@ def run_ppl_eval(
 
     totals = meter.totals()
 
-    out_dir = Path(result_dir) if (result_dir is not None and str(result_dir).strip() != "") else (Path.cwd() / "results")
+    out_dir = (
+        Path(result_dir)
+        if (result_dir is not None and str(result_dir).strip() != "")
+        else (Path.cwd() / "results")
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_id = time.strftime("%Y%m%d_%H%M%S")
@@ -583,7 +653,8 @@ def run_ppl_eval(
             "dtype": dtype,
             "load_in_8bit": load8,
             "load_in_4bit": load4,
-            "compressor": comp.name,
+            "norm_compressor": norm_comp.name,
+            "residual_compressor": residual_comp.name,
             "max_length": max_length,
             "stride": stride,
             "first_k_tokens": first_k_tokens,
@@ -602,41 +673,71 @@ def run_ppl_eval(
         json.dump(record, f, ensure_ascii=False, indent=2)
 
     if wandb_run is not None:
-        wandb_run.log({
-            "eval/ppl_final": ppl,
-            "traffic/bytes_per_token": totals["bytes_per_token"],
-            "eval/seconds": (t1 - t0),
-        })
+        wandb_run.log(
+            {
+                "eval/ppl_final": ppl,
+                "traffic/bytes_per_token": totals["bytes_per_token"],
+                "eval/seconds": (t1 - t0),
+            }
+        )
         wandb_run.finish()
 
     return ppl, totals, str(out_path)
-
-
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="WikiText2 PPL eval")
 
     # model / load
-    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-8B",
-                    help="Just a label for logging/record; model is loaded from --model_dir")
-    p.add_argument("--model_dir", type=str, default="/mnt/ssd/liaw/Qwen/Qwen3-8B",
-                    help="Local model directory to load tokenizer/model from")
+    p.add_argument(
+        "--model_name",
+        type=str,
+        default="Qwen/Qwen3-8B",
+        help="Just a label for logging/record; model is loaded from --model_dir",
+    )
+    p.add_argument(
+        "--model_dir",
+        type=str,
+        default="/mnt/ssd/liaw/Qwen/Qwen3-8B",
+        help="Local model directory to load tokenizer/model from",
+    )
 
-    p.add_argument("--dtype", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
+    p.add_argument(
+        "--dtype", type=str, default="fp16", choices=["fp32", "fp16", "bf16"]
+    )
     p.add_argument("--load_in_8bit", action="store_true", default=True)
     p.add_argument("--load_in_4bit", action="store_true", default=False)
 
     # eval
     p.add_argument("--max_length", type=int, default=2048)
     p.add_argument("--stride", type=int, default=512)
-    p.add_argument("--first_k_tokens", type=int, default=0,
-                    help="Only evaluate first K tokens (0 means full length)")
+    p.add_argument(
+        "--first_k_tokens",
+        type=int,
+        default=0,
+        help="Only evaluate first K tokens (0 means full length)",
+    )
     p.add_argument("--batch_windows", type=int, default=2)
 
     # compressor (built-in only)
-    p.add_argument("--compressor", type=str, default="none",
-                    help="Built-in compressor name (e.g., none)")
+    p.add_argument(
+        "--compressor",
+        type=str,
+        default="none",
+        help="Legacy shorthand: sets both norm and residual compressors",
+    )
+    p.add_argument(
+        "--norm_compressor",
+        type=str,
+        default=None,
+        help="Built-in compressor name for norm path (defaults to --compressor)",
+    )
+    p.add_argument(
+        "--residual_compressor",
+        type=str,
+        default=None,
+        help="Built-in compressor name for residual path (defaults to --compressor)",
+    )
 
     # wandb
     p.add_argument("--wandb", action="store_true", default=True)
@@ -645,15 +746,27 @@ def parse_args():
     p.add_argument("--wandb_log_every", type=int, default=10)
 
     # results
-    p.add_argument("--result_dir", type=str, default=None,
-                    help='Where to save results. Default: "./results" in current working dir.')
+    p.add_argument(
+        "--result_dir",
+        type=str,
+        default=None,
+        help='Where to save results. Default: "./results" in current working dir.',
+    )
 
     return p.parse_args()
 
 
 if __name__ == "__main__":
-
     args = parse_args()
+
+    norm_comp = (
+        args.norm_compressor if args.norm_compressor is not None else args.compressor
+    )
+    residual_comp = (
+        args.residual_compressor
+        if args.residual_compressor is not None
+        else args.compressor
+    )
 
     ppl, totals, out_path = run_ppl_eval(
         model_name=args.model_name,
@@ -661,7 +774,8 @@ if __name__ == "__main__":
         dtype=args.dtype,
         load_in_8bit=args.load_in_8bit,
         load_in_4bit=args.load_in_4bit,
-        compressor=args.compressor,
+        norm_compressor=norm_comp,
+        residual_compressor=residual_comp,
         max_length=args.max_length,
         stride=args.stride,
         first_k_tokens=args.first_k_tokens,

@@ -199,21 +199,25 @@ class OutlierSeparationOnlineSVDCompressor(Compressor):
         return topk_activation, residual, k
 
     def get_sparse_matrix_size(self, topk_activation: torch.Tensor) -> int:
+        # if topk_activation is None:
+        #     return 0
+        # nnz = topk_activation._nnz()
+        # ndim = topk_activation.dim()
+        # return nnz * 4 + nnz * ndim * 8
         """
         Returns the size of the sparse matrix in bytes.
+        Since each row has same k non-zero elements, we can calculate the optimal size as:
+        - Column indices: k * rows * sizeof(int16)
+        - Values: k * rows * sizeof(float32)
         """
-        nnz = topk_activation._nnz()
-        ndim = topk_activation.dim()
+        assert topk_activation.dim() >= 2, "topk_activation must be at least two dims [token dimension, feature dimension] or maybe with batch dimension -> [batch, token, feature]"
+        # reshape to 2D if needed
         
-        # Values: float32 (4 bytes)
-        values_size = nnz * 4
+        total_rows = topk_activation.numel() // topk_activation.shape[-1]
         
-        # Indices: int64 (8 bytes) usually in PyTorch, but we can assume efficient storage
-        # If we serialize, we might use smaller types, but let's stick to PyTorch defaults or estimation.
-        # PyTorch Sparse COO uses 1 set of values and 'ndim' sets of indices.
-        indices_size = nnz * ndim * 8 
+        k = topk_activation._nnz() // total_rows
         
-        return values_size + indices_size
+        return (k * total_rows * 2) + (k * total_rows * 4)  # int16 + float32
 
 
 if __name__ == "__main__":
