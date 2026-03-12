@@ -22,7 +22,6 @@ def main() -> None:
     )
     parser.add_argument("--first-k-tokens", type=int, default=0)
     parser.add_argument("--batch-windows", type=int, default=2)
-    parser.add_argument("--niter", type=int, default=2)
     parser.add_argument("--svd-device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument(
         "--result-dir", type=str, default="results/onlinesvd_qwen3_8b_compare"
@@ -34,59 +33,53 @@ def main() -> None:
     dtype = args.dtype
     first_k_tokens = args.first_k_tokens
     batch_windows = args.batch_windows
-    niter = args.niter
     svd_device = args.svd_device
 
     cases = []
-
-    # cases.append(
-    #     (
-    #         "onlinesvd_only",
-    #         OnlineSVDCompressor(
-    #             rank=512,
-    #             mode="trunc_approx",
-    #             fmt_uv="fp32",
-    #             fmt_s="fp32",
-    #             niter=niter,
-    #             svd_device=svd_device,
-    #         ),
-    #     )
-    # )
-
-    # cases.append(
-    #     (
-    #         "onlinesvd_bitsqz",
-    #         OnlineSVDBitSqueezeCompressor(
-    #             rank=512,
-    #             mode="trunc_approx",
-    #             fmt_uv="nf4_dq",
-    #             fmt_s="fp32",
-    #             niter=niter,
-    #             svd_device=svd_device,
-    #         ),
-    #     )
-    # )
-
+    
     # uv_formats = ["fp32", "fp16", "bf16", "q8_0", "mxfp8", "fp8", "q4_0", "nf4", "mxfp4", "nf4_dq", "q2_k"]
+    
+    # uv_formats = ["nf4_dq"]
+    # ratios = [0.001]
+    # niters = [2, 4, 6]
+    # oversamples = [0, 2, 4, 6, 8, 10]
 
-    uv_formats = ["fp32"]
+    # uv_formats = ["nf4_dq"]
+    # ratios = [0.001]
+    # niters = [6]
+    # oversamples = [0]
+    # scale_alphas = [0, 0.25, 0.5, 0.75, 1]
+
+    uv_formats = ["nf4_dq"]
+    ratios = [0.001]
+    niters = [6]
+    oversamples = [0]
+    scale_alphas = [0]
+    residual_center = "center"
+    center_factor_format = torch.float32
 
     for uv_format in uv_formats:
-        for ratio in [0.005, 0.001, 0]:
-            cases.append(
-                (
-                    f"test_{ratio:.3f}_{uv_format}",
-                    OutlierSeparationOnlineSVDCompressor(
-                        rank=512,
-                        mode="trunc_approx",
-                        outlier_ratio=ratio,
-                        fmt_uv=uv_format,
-                        fmt_s="fp32",
-                        niter=niter,
-                        svd_device=svd_device,
-                    ),
-                )
-            )
+        for ratio in ratios:
+            for oversample in oversamples:
+                for niter in niters:
+                    for scale_alpha in scale_alphas:
+                        cases.append(
+                            (
+                                f"test_{ratio:.3f}_{uv_format}_{oversample}_{niter}_{scale_alpha}_{residual_center}",
+                                OutlierSeparationOnlineSVDCompressor(
+                                    rank=512,
+                                    mode="trunc_approx",
+                                    outlier_ratio=ratio,
+                                    fmt_uv=uv_format,
+                                    fmt_s="fp32",
+                                    niter=niter,
+                                    q_oversample=oversample,
+                                    residual_center=residual_center,
+                                    center_factor_format=center_factor_format,
+                                    svd_device=svd_device,
+                                ),
+                            )
+                        )
 
     for name, comp in cases:
         print(f"Running {name}...")
