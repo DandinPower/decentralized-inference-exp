@@ -35,61 +35,49 @@ def main() -> None:
     batch_windows = args.batch_windows
     svd_device = args.svd_device
 
+
+    UV_FORMATS = ["fp32", "fp16", "bf16", "q8_0", "mxfp8", "fp8", "q4_0", "nf4", "mxfp4", "nf4_dq", "q2_k"]
+    RANK=512
+    OUTLIER_RATIO=0.001
+    FMT_S="fp32"
+    NITER=6 # for approx
+    Q_OVERSAMPLE=0  # for approx
+
+    result_dir = "results/show_the_better_onlinesvd_niters_is_comparable_to_fullsvd"
     cases = []
+    for uv_format in UV_FORMATS:
+        cases.append(
+            (
+                f"trunc_approx_{uv_format}",
+                OutlierSeparationOnlineSVDCompressor(
+                    rank=RANK,
+                    mode="trunc_approx",
+                    outlier_ratio=OUTLIER_RATIO,
+                    fmt_uv=uv_format,
+                    fmt_s=FMT_S,
+                    niter=NITER,
+                    q_oversample=Q_OVERSAMPLE,
+                    svd_device=svd_device,
+                ),
+            )
+        )
 
-    # uv_formats = ["fp32", "fp16", "bf16", "q8_0", "mxfp8", "fp8", "q4_0", "nf4", "mxfp4", "nf4_dq", "q2_k"]
-
-    # uv_formats = ["nf4_dq"]
-    # ratios = [0.001]
-    # niters = [2, 4, 6]
-    # oversamples = [0, 2, 4, 6, 8, 10]
-
-    # uv_formats = ["nf4_dq"]
-    # ratios = [0.001]
-    # niters = [6]
-    # oversamples = [0]
-    # scale_alphas = [0, 0.25, 0.5, 0.75, 1]
-
-    uv_formats = ["nf4_dq"]
-    ratios = [0.001]
-    niters = [6]
-    oversamples = [0]
-    scale_alphas = [0]
-    residual_center = "none"
-    center_factor_format = torch.float32
-    svd_error_correction_ratios=[0.001, 0.005]
-
-    for uv_format in uv_formats:
-        for ratio in ratios:
-            for oversample in oversamples:
-                for niter in niters:
-                    for scale_alpha in scale_alphas:
-                        for svd_error_correction_ratio in svd_error_correction_ratios:
-                            cases.append(
-                                (
-                                    f"test_{ratio:.3f}_{uv_format}_{oversample}_{niter}_{scale_alpha}_{residual_center}_{svd_error_correction_ratio}",
-                                    OutlierSeparationOnlineSVDCompressor(
-                                        rank=512,
-                                        mode="trunc_approx",
-                                        outlier_ratio=ratio,
-                                        svd_error_correction_ratio=svd_error_correction_ratio,
-                                        fmt_uv=uv_format,
-                                        fmt_s="fp32",
-                                        niter=niter,
-                                        q_oversample=oversample,
-                                        residual_center=residual_center,
-                                        center_factor_format=center_factor_format,
-                                        svd_device=svd_device,
-                                    ),
-                                )
-                            )
-
-
-    # Showing that 
-
+        cases.append(
+            (
+                f"trunc_slice_{uv_format}",
+                OutlierSeparationOnlineSVDCompressor(
+                    rank=RANK,
+                    mode="trunc_slice",
+                    outlier_ratio=OUTLIER_RATIO,
+                    fmt_uv=uv_format,
+                    fmt_s=FMT_S,
+                    svd_device=svd_device,
+                ),
+            )
+        )
 
     for name, comp in cases:
-        print(f"Running {name}...")
+        print(f"Running {result_dir}/{name}...")
         run_ppl_eval(
             model_name=model_name,
             model_dir=model_dir,
@@ -98,13 +86,120 @@ def main() -> None:
             compressor=comp,
             first_k_tokens=first_k_tokens,
             batch_windows=batch_windows,
-            result_dir=f"{args.result_dir}/{name}",
+            result_dir=f"{result_dir}/{name}",
             wandb=False,
         )
 
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    cases.clear()
+
+    result_dir = "results/show_the_none_and_center_difference"
+    cases = []
+    for uv_format in UV_FORMATS:
+        cases.append(
+            (
+                f"center_none_{uv_format}",
+                OutlierSeparationOnlineSVDCompressor(
+                    rank=RANK,
+                    mode="trunc_approx",
+                    outlier_ratio=OUTLIER_RATIO,
+                    fmt_uv=uv_format,
+                    fmt_s=FMT_S,
+                    niter=NITER,
+                    q_oversample=Q_OVERSAMPLE,
+                    residual_center="none",
+                    svd_device=svd_device,
+                ),
+            )
+        )
+
+        cases.append(
+            (
+                f"center_fp32_{uv_format}",
+                OutlierSeparationOnlineSVDCompressor(
+                    rank=RANK,
+                    mode="trunc_approx",
+                    outlier_ratio=OUTLIER_RATIO,
+                    fmt_uv=uv_format,
+                    fmt_s=FMT_S,
+                    niter=NITER,
+                    q_oversample=Q_OVERSAMPLE,
+                    residual_center="center",
+                    center_factor_format=torch.float32,
+                    svd_device=svd_device,
+                ),
+            )
+        )
+
+    for name, comp in cases:
+        print(f"Running {result_dir}/{name}...")
+        run_ppl_eval(
+            model_name=model_name,
+            model_dir=model_dir,
+            dtype=dtype,
+            load_in_8bit=True,
+            compressor=comp,
+            first_k_tokens=first_k_tokens,
+            batch_windows=batch_windows,
+            result_dir=f"{result_dir}/{name}",
+            wandb=False,
+        )
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    cases.clear()
+
+    result_dir = "results/show_which_error_correction_is_better_and_consider_the_rank_again"
+    uv_format = "nf4_dq"
+    cases = []
+    ranks = [64, 128, 256, 384, 512]
+    error_correction_ratios = [0, 0.001, 0.005, 0.01, 0.015, 0.02]
+    for error_correction_ratio in error_correction_ratios:
+        for rank in ranks:
+            cases.append(
+                (
+                    f"error_correction_{error_correction_ratio}_{uv_format}_rank_{rank}",
+                    OutlierSeparationOnlineSVDCompressor(
+                        rank=rank,
+                        mode="trunc_approx",
+                        outlier_ratio=OUTLIER_RATIO,
+                        fmt_uv=uv_format,
+                        fmt_s=FMT_S,
+                        niter=NITER,
+                        q_oversample=Q_OVERSAMPLE,
+                        svd_error_correction_ratio=error_correction_ratio,
+                        svd_device=svd_device,
+                    ),
+                )
+            )
+
+    for name, comp in cases:
+        print(f"Running {result_dir}/{name}...")
+        run_ppl_eval(
+            model_name=model_name,
+            model_dir=model_dir,
+            dtype=dtype,
+            load_in_8bit=True,
+            compressor=comp,
+            first_k_tokens=first_k_tokens,
+            batch_windows=batch_windows,
+            result_dir=f"{result_dir}/{name}",
+            wandb=False,
+        )
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    cases.clear()
+
+
+    
 
 
 if __name__ == "__main__":
