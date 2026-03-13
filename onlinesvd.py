@@ -79,7 +79,7 @@ def _import_bitsqueeze():
 def _separate_topk_activation_and_residual(
     input_activation: torch.Tensor,
     topk_ratio: float,
-) -> tuple[torch.Tensor | None, torch.Tensor, int]:
+) -> tuple[dict[str, Any] | None, torch.Tensor, int]:
     """Split out top-k values per flattened token row.
 
     Returns tuple(sparse_topk, residual, k).
@@ -111,38 +111,84 @@ def _separate_topk_activation_and_residual(
     residual_flat.scatter_(1, topk_indices, 0.0)
     residual = residual_flat.view(original_shape)
 
-    feat_indices = topk_indices.reshape(-1)
-    flat_row_indices = torch.arange(total_rows, device=input_activation.device)
-    flat_row_indices = flat_row_indices.unsqueeze(1).expand(-1, k).reshape(-1)
-
-    # Reconstruct full sparse indices from flattened row index + feature index.
-    spatial_dims = original_shape[:-1]
-    indices_list: list[torch.Tensor] = []
-    current = flat_row_indices
-    spatial_indices_reversed: list[torch.Tensor] = []
-
-    for dim_size in reversed(spatial_dims):
-        coord = current % dim_size
-        spatial_indices_reversed.append(coord)
-        current = current // dim_size
-
-    indices_list.extend(reversed(spatial_indices_reversed))
-    indices_list.append(feat_indices)
-    all_indices = torch.stack(indices_list)
-
     return (
-        torch.sparse_coo_tensor(
-            all_indices,
-            topk_values.reshape(-1),
-            size=original_shape,
-            device=input_activation.device,
-        ),
+        {
+            "indices": topk_indices.to(dtype=torch.int16).contiguous(),
+            "values": topk_values.to(dtype=torch.float32).contiguous(),
+            "shape": tuple(original_shape),
+            "k": int(k),
+            "rows": int(total_rows),
+        },
         residual,
         k,
     )
 
 
-def _sparse_matrix_bytes(topk_activation: torch.Tensor | None) -> int:
+def _extract_row_topk_payload(
+    matrix: torch.Tensor,
+    topk_ratio: float,
+) -> tuple[dict[str, Any] | None, int]:
+    if matrix.dtype != torch.float32:
+        raise ValueError("matrix must be fp32")
+    if matrix.dim() < 2:
+        raise ValueError("matrix must be at least 2D")
+    if not (0.0 <= topk_ratio <= 1.0):
+        raise ValueError("topk_ratio must be in [0, 1]")
+    if topk_ratio == 0.0:
+        return None, 0
+
+    original_shape = matrix.shape
+    feature_dim = original_shape[-1]
+    flat = matrix.reshape(-1, feature_dim)
+    total_rows, cols = flat.shape
+    k = int(cols * topk_ratio)
+    if k <= 0:
+        return None, 0
+    k = min(k, cols)
+
+    _, topk_indices = torch.topk(flat.abs(), k, dim=1)
+    topk_values = torch.gather(flat, 1, topk_indices)
+
+    return (
+        {
+            "indices": topk_indices.to(dtype=torch.int16).contiguous(),
+            "values": topk_values.to(dtype=torch.float32).contiguous(),
+            "shape": tuple(original_shape),
+            "k": int(k),
+            "rows": int(total_rows),
+        },
+        k,
+    )
+
+
+def _row_topk_payload_to_cpu(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    return {
+        "indices": payload["indices"].to(device="cpu").contiguous(),
+        "values": payload["values"].to(device="cpu").contiguous(),
+        "shape": payload["shape"],
+        "k": int(payload["k"]),
+        "rows": int(payload["rows"]),
+    }
+
+
+def _scatter_add_row_topk(
+    base: torch.Tensor,
+    payload: dict[str, Any] | None,
+) -> torch.Tensor:
+    if payload is None:
+        return base
+
+    out = base.contiguous()
+    flat = out.view(-1, out.shape[-1])
+    indices = payload["indices"].to(device=out.device, dtype=torch.long)
+    values = payload["values"].to(device=out.device, dtype=torch.float32)
+    flat.scatter_add_(1, indices, values)
+    return out
+
+
+def _sparse_matrix_bytes(topk_activation: dict[str, Any] | None) -> int:
     # if topk_activation is None:
     #     return 0
     # nnz = topk_activation._nnz()
@@ -158,14 +204,8 @@ def _sparse_matrix_bytes(topk_activation: torch.Tensor | None) -> int:
     if topk is None:
         return 0
 
-    assert topk.dim() >= 2, (
-        "topk_activation must be at least two dims [token dimension, feature dimension] or maybe with batch dimension -> [batch, token, feature]"
-    )
-    # reshape to 2D if needed
-
-    total_rows = topk.numel() // topk.shape[-1]
-
-    k = topk._nnz() // total_rows
+    total_rows = int(topk["rows"])
+    k = int(topk["k"])
 
     return (k * total_rows * 2) + (k * total_rows * 4)  # int16 + float32
 
@@ -179,6 +219,7 @@ class OnlineSVDCompressor(Compressor):
         mode: str,
         *,
         outlier_ratio: float = 0.0,
+        svd_error_correction_ratio: float = 0.0,
         fmt_uv: str = "fp32",
         fmt_s: str | None = None,
         niter: int = 2,
@@ -194,6 +235,7 @@ class OnlineSVDCompressor(Compressor):
         self.rank = int(rank)
         self.mode = mode
         self.outlier_ratio = float(outlier_ratio)
+        self.svd_error_correction_ratio = float(svd_error_correction_ratio)
         self.fmt_uv = fmt_uv.lower()
         self.fmt_s = fmt_s.lower() if fmt_s is not None else self.fmt_uv
         self.niter = int(niter)
@@ -217,6 +259,11 @@ class OnlineSVDCompressor(Compressor):
         if not (0.0 <= self.outlier_ratio < 1.0):
             raise ValueError(
                 f"outlier_ratio must be in [0,1), got {self.outlier_ratio}"
+            )
+        if not (0.0 <= self.svd_error_correction_ratio <= 1.0):
+            raise ValueError(
+                "svd_error_correction_ratio must be in [0,1], "
+                f"got {self.svd_error_correction_ratio}"
             )
         if self.fmt_uv not in FORMAT_TO_METHOD:
             raise ValueError(f"Unknown fmt_uv: {self.fmt_uv}")
@@ -295,6 +342,8 @@ class OnlineSVDCompressor(Compressor):
             parts.append(f"qov{self.q_oversample}")
         if self.outlier_ratio > 0:
             parts.append(f"out{self.outlier_ratio:g}")
+        if self.svd_error_correction_ratio > 0:
+            parts.append(f"ec{self.svd_error_correction_ratio:g}")
         if self._use_bitsqueeze:
             parts.append(f"uv-{self.fmt_uv}")
             if self.fmt_s != self.fmt_uv:
@@ -389,14 +438,16 @@ class OnlineSVDCompressor(Compressor):
         x_work = x_fp32.to(work_device)
 
         if self.outlier_ratio > 0:
-            topk_activation, residual, k = _separate_topk_activation_and_residual(
+            topk_activation, residual, topk_k = _separate_topk_activation_and_residual(
                 x_work, self.outlier_ratio
             )
         else:
             topk_activation = None
             residual = x_work
-            k = 0
+            topk_k = 0
 
+        scale_factor = None
+        center_factor = None
         if self._use_residual_scaling:
             scale_factor = self._compute_feature_scale(residual)
             residual_for_svd = residual / scale_factor.unsqueeze(-2)
@@ -436,19 +487,37 @@ class OnlineSVDCompressor(Compressor):
         qS, s_bytes = self._quantize(S, self.fmt_s)
         qVh, vh_bytes = self._quantize(Vh, self.fmt_uv)
 
+        deq_U = self._dequantize(qU, work_device)
+        deq_S = self._dequantize(qS, work_device)
+        deq_Vh = self._dequantize(qVh, work_device)
+        k_eff = min(self.rank, deq_U.shape[-1], deq_S.shape[-1], deq_Vh.shape[-2])
+        deq_U = deq_U[..., :k_eff]
+        deq_S = deq_S[..., :k_eff]
+        deq_Vh = deq_Vh[..., :k_eff, :]
+        low_rank = (deq_U * deq_S.unsqueeze(-2)) @ deq_Vh
+        if scale_factor is not None:
+            low_rank = low_rank * scale_factor.unsqueeze(-2)
+        if center_factor is not None:
+            low_rank = low_rank + center_factor.unsqueeze(-2)
+
+        svd_error = residual - low_rank
+        error_correction_payload, error_topk_k = _extract_row_topk_payload(
+            svd_error,
+            self.svd_error_correction_ratio,
+        )
+
         nbytes = (
             u_bytes
             + s_bytes
             + vh_bytes
             + _sparse_matrix_bytes(topk_activation)
+            + _sparse_matrix_bytes(error_correction_payload)
             + scale_factor_bytes
             + center_factor_bytes
         )
 
-        if topk_activation is not None:
-            topk_cpu = topk_activation.to("cpu")
-        else:
-            topk_cpu = None
+        topk_cpu = _row_topk_payload_to_cpu(topk_activation)
+        error_topk_cpu = _row_topk_payload_to_cpu(error_correction_payload)
 
         return Payload(
             data=(
@@ -456,6 +525,7 @@ class OnlineSVDCompressor(Compressor):
                 qS,
                 qVh,
                 topk_cpu,
+                error_topk_cpu,
                 scale_factor_payload,
                 center_factor_payload,
             ),
@@ -467,7 +537,9 @@ class OnlineSVDCompressor(Compressor):
                 "effective_rank": int(S.shape[-1]),
                 "mode": self.mode,
                 "outlier_ratio": self.outlier_ratio,
-                "topk_k": k,
+                "svd_error_correction_ratio": self.svd_error_correction_ratio,
+                "topk_k": topk_k,
+                "error_topk_k": error_topk_k,
                 "fmt_uv": self.fmt_uv,
                 "fmt_s": self.fmt_s,
                 "niter": self.niter,
@@ -485,6 +557,7 @@ class OnlineSVDCompressor(Compressor):
     def decompress(
         self, p: Payload, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
+        error_correction = None
         if len(p.data) == 4:
             qU, qS, qVh, topk_activation = p.data
             scale_factor = None
@@ -494,6 +567,16 @@ class OnlineSVDCompressor(Compressor):
             center_factor = None
         elif len(p.data) == 6:
             qU, qS, qVh, topk_activation, scale_factor, center_factor = p.data
+        elif len(p.data) == 7:
+            (
+                qU,
+                qS,
+                qVh,
+                topk_activation,
+                error_correction,
+                scale_factor,
+                center_factor,
+            ) = p.data
         else:
             raise ValueError(f"Unexpected payload format with {len(p.data)} elements")
         U = self._dequantize(qU, device)
@@ -512,11 +595,16 @@ class OnlineSVDCompressor(Compressor):
         if center_factor is not None:
             center_factor_f32 = center_factor.to(device=device, dtype=torch.float32)
             decompressed = decompressed + center_factor_f32.unsqueeze(-2)
+        if isinstance(error_correction, dict):
+            decompressed = _scatter_add_row_topk(decompressed, error_correction)
         if topk_activation is not None:
-            topk_dense = topk_activation.to(
-                device=device, dtype=torch.float32
-            ).to_dense()
-            decompressed = decompressed + topk_dense
+            if isinstance(topk_activation, dict):
+                decompressed = _scatter_add_row_topk(decompressed, topk_activation)
+            else:
+                topk_dense = topk_activation.to(
+                    device=device, dtype=torch.float32
+                ).to_dense()
+                decompressed = decompressed + topk_dense
 
         return decompressed.to(device=device, dtype=dtype)
 
@@ -529,6 +617,7 @@ class OutlierSeparationOnlineSVDCompressor(OnlineSVDCompressor):
         rank: int,
         mode: str,
         outlier_ratio: float,
+        svd_error_correction_ratio: float = 0.0,
         fmt_uv: str = "fp32",
         fmt_s: str | None = None,
         niter: int = 2,
@@ -545,6 +634,7 @@ class OutlierSeparationOnlineSVDCompressor(OnlineSVDCompressor):
             rank=rank,
             mode=mode,
             outlier_ratio=outlier_ratio,
+            svd_error_correction_ratio=svd_error_correction_ratio,
             fmt_uv=fmt_uv,
             fmt_s=fmt_s,
             niter=niter,
@@ -570,6 +660,7 @@ class OnlineSVDBitSqueezeCompressor(OnlineSVDCompressor):
         fmt_uv: str,
         fmt_s: str | None = None,
         outlier_ratio: float = 0.0,
+        svd_error_correction_ratio: float = 0.0,
         niter: int = 2,
         q_oversample: int = 0,
         svd_device: str = "auto",
@@ -584,6 +675,7 @@ class OnlineSVDBitSqueezeCompressor(OnlineSVDCompressor):
             rank=rank,
             mode=mode,
             outlier_ratio=outlier_ratio,
+            svd_error_correction_ratio=svd_error_correction_ratio,
             fmt_uv=fmt_uv,
             fmt_s=fmt_s,
             niter=niter,

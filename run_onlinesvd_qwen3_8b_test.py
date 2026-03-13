@@ -36,9 +36,9 @@ def main() -> None:
     svd_device = args.svd_device
 
     cases = []
-    
+
     # uv_formats = ["fp32", "fp16", "bf16", "q8_0", "mxfp8", "fp8", "q4_0", "nf4", "mxfp4", "nf4_dq", "q2_k"]
-    
+
     # uv_formats = ["nf4_dq"]
     # ratios = [0.001]
     # niters = [2, 4, 6]
@@ -55,31 +55,38 @@ def main() -> None:
     niters = [6]
     oversamples = [0]
     scale_alphas = [0]
-    residual_center = "center"
+    residual_center = "none"
     center_factor_format = torch.float32
+    svd_error_correction_ratios=[0.001, 0.005]
 
     for uv_format in uv_formats:
         for ratio in ratios:
             for oversample in oversamples:
                 for niter in niters:
                     for scale_alpha in scale_alphas:
-                        cases.append(
-                            (
-                                f"test_{ratio:.3f}_{uv_format}_{oversample}_{niter}_{scale_alpha}_{residual_center}",
-                                OutlierSeparationOnlineSVDCompressor(
-                                    rank=512,
-                                    mode="trunc_approx",
-                                    outlier_ratio=ratio,
-                                    fmt_uv=uv_format,
-                                    fmt_s="fp32",
-                                    niter=niter,
-                                    q_oversample=oversample,
-                                    residual_center=residual_center,
-                                    center_factor_format=center_factor_format,
-                                    svd_device=svd_device,
-                                ),
+                        for svd_error_correction_ratio in svd_error_correction_ratios:
+                            cases.append(
+                                (
+                                    f"test_{ratio:.3f}_{uv_format}_{oversample}_{niter}_{scale_alpha}_{residual_center}_{svd_error_correction_ratio}",
+                                    OutlierSeparationOnlineSVDCompressor(
+                                        rank=512,
+                                        mode="trunc_approx",
+                                        outlier_ratio=ratio,
+                                        svd_error_correction_ratio=svd_error_correction_ratio,
+                                        fmt_uv=uv_format,
+                                        fmt_s="fp32",
+                                        niter=niter,
+                                        q_oversample=oversample,
+                                        residual_center=residual_center,
+                                        center_factor_format=center_factor_format,
+                                        svd_device=svd_device,
+                                    ),
+                                )
                             )
-                        )
+
+
+    # Showing that 
+
 
     for name, comp in cases:
         print(f"Running {name}...")

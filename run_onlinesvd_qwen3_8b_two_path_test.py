@@ -22,6 +22,12 @@ def main() -> None:
     parser.add_argument("--niter", type=int, default=2)
     parser.add_argument("--svd-device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument(
+        "--svd-error-correction-ratio",
+        type=float,
+        default=0.0,
+        help="Secondary per-row top-k ratio for SVD reconstruction error.",
+    )
+    parser.add_argument(
         "--result-dir", type=str, default="results/onlinesvd_qwen3_8b_two_path_compare"
     )
     args = parser.parse_args()
@@ -52,6 +58,7 @@ def main() -> None:
                         rank=512,
                         mode="trunc_approx",
                         outlier_ratio=ratio,
+                        svd_error_correction_ratio=args.svd_error_correction_ratio,
                         fmt_uv=uv_format,
                         fmt_s="fp32",
                         niter=args.niter,
