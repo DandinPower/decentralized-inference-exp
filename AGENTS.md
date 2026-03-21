@@ -1,1 +1,0 @@
-- For any python related commands, use source .venv/bin/activate first
