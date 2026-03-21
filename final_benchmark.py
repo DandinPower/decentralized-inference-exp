@@ -56,21 +56,21 @@ def main() -> None:
 
     for name, comp in cases:
         print(f"Running {result_dir}/{name}...")
-        # run_ppl_eval(
-        #     model_name=model_name,
-        #     model_dir=model_dir,
-        #     dtype=dtype,
-        #     load_in_8bit=True,
-        #     compressor=comp,
-        #     first_k_tokens=first_k_tokens,
-        #     batch_windows=batch_windows,
-        #     result_dir=f"{result_dir}/{name}",
-        #     wandb=False,
-        # )
+        run_ppl_eval(
+            model_name=model_name,
+            model_dir=model_dir,
+            dtype=dtype,
+            load_in_8bit=True,
+            compressor=comp,
+            first_k_tokens=first_k_tokens,
+            batch_windows=batch_windows,
+            result_dir=f"{result_dir}/{name}",
+            wandb=False,
+        )
 
-        # gc.collect()
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     cases.clear()
 
@@ -88,21 +88,21 @@ def main() -> None:
 
     for name, comp in cases:
         print(f"Running {result_dir}/{name}...")
-        # run_ppl_eval(
-        #     model_name=model_name,
-        #     model_dir=model_dir,
-        #     dtype=dtype,
-        #     load_in_8bit=True,
-        #     compressor=comp,
-        #     first_k_tokens=first_k_tokens,
-        #     batch_windows=batch_windows,
-        #     result_dir=f"{result_dir}/{name}",
-        #     wandb=False,
-        # )
+        run_ppl_eval(
+            model_name=model_name,
+            model_dir=model_dir,
+            dtype=dtype,
+            load_in_8bit=True,
+            compressor=comp,
+            first_k_tokens=first_k_tokens,
+            batch_windows=batch_windows,
+            result_dir=f"{result_dir}/{name}",
+            wandb=False,
+        )
 
-        # gc.collect()
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     cases.clear()
 
@@ -127,21 +127,21 @@ def main() -> None:
 
     for name, comp in cases:
         print(f"Running {result_dir}/{name}...")
-        # run_ppl_eval(
-        #     model_name=model_name,
-        #     model_dir=model_dir,
-        #     dtype=dtype,
-        #     load_in_8bit=True,
-        #     compressor=comp,
-        #     first_k_tokens=first_k_tokens,
-        #     batch_windows=batch_windows,
-        #     result_dir=f"{result_dir}/{name}",
-        #     wandb=False,
-        # )
+        run_ppl_eval(
+            model_name=model_name,
+            model_dir=model_dir,
+            dtype=dtype,
+            load_in_8bit=True,
+            compressor=comp,
+            first_k_tokens=first_k_tokens,
+            batch_windows=batch_windows,
+            result_dir=f"{result_dir}/{name}",
+            wandb=False,
+        )
 
-        # gc.collect()
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     cases.clear()
 
@@ -170,21 +170,21 @@ def main() -> None:
 
     for name, comp in cases:
         print(f"Running {result_dir}/{name}...")
-        # run_ppl_eval(
-        #     model_name=model_name,
-        #     model_dir=model_dir,
-        #     dtype=dtype,
-        #     load_in_8bit=True,
-        #     compressor=comp,
-        #     first_k_tokens=first_k_tokens,
-        #     batch_windows=batch_windows,
-        #     result_dir=f"{result_dir}/{name}",
-        #     wandb=False,
-        # )
+        run_ppl_eval(
+            model_name=model_name,
+            model_dir=model_dir,
+            dtype=dtype,
+            load_in_8bit=True,
+            compressor=comp,
+            first_k_tokens=first_k_tokens,
+            batch_windows=batch_windows,
+            result_dir=f"{result_dir}/{name}",
+            wandb=False,
+        )
 
-        # gc.collect()
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     cases.clear()
 
