@@ -1,6 +1,6 @@
-MODEL_NAME="Qwen/Qwen3.5-0.8B"
-MODEL_DIR="/mnt/ssd/liaw/Qwen/Qwen3.5-0.8B"
-RESULT_NAME="Qwen/Qwen3.5-0.8B"
+MODEL_NAME="Qwen/Qwen3-8B"
+MODEL_DIR="/mnt/ssd/liaw/Qwen/Qwen3-8B"
+RESULT_NAME="Qwen/Qwen3-8B"
 
 source .venv/bin/activate && python -u final_benchmark.py \
     --model-name "$MODEL_NAME" \

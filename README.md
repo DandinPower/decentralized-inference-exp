@@ -13,7 +13,7 @@ The following setup steps are preserved from the original README:
 ```bash
 uv venv
 uv pip install torch --index-url https://download.pytorch.org/whl/cu128
-uv pip install huggingface-hub numpy packaging psutil pyyaml safetensors transformers datasets accelerate bitsandbytes torchao
+uv pip install huggingface-hub numpy packaging psutil pyyaml safetensors transformers datasets accelerate bitsandbytes torchao matplotlib
 
 git clone https://github.com/DandinPower/PyBitSqueeze.git
 cd PyBitSqueeze
@@ -27,6 +27,7 @@ cd ..
 - `src/`: evaluation pipeline and compressor implementations
 - `example/`: runnable examples for each compressor family
 - `scripts/`: pre-built visualization scripts for Pareto plots
+- `scripts/plot_final_benchmark_pareto.py`: aggregate latest final benchmark runs and render family-wise Pareto frontiers
 - `final_benchmark.py`: main benchmark sweep entry point
 - `final_benchmark.sh`: convenient benchmark launcher with model presets
 - `docs/`: detailed project documentation
@@ -59,8 +60,27 @@ python -u final_benchmark.py \
   - OnlineSVD + BitSqueeze + outlier separation
   - OnlineSVD error-correction sweeps
 - `final_benchmark.sh` defines model presets and launches `final_benchmark.py` with those values.
+- `scripts/plot_final_benchmark_pareto.py` reads the newest `run_*.json` from each approach under those four groups, exports a consolidated CSV, and saves Pareto plots.
 
 Results are written under `results/<result-name>/.../run_YYYYMMDD_HHMMSS.json`.
+
+### Plot Final Benchmark Pareto
+
+After benchmark runs are available, generate a consolidated Pareto view:
+
+```bash
+python -u scripts/plot_final_benchmark_pareto.py \
+  --results-dir results/Qwen/Qwen3.5-9B
+```
+
+By default this writes:
+
+- `results/<result-name>/pareto_final_benchmark_data.csv`
+- six figure variants under `results/<result-name>/` (label by approach name / avg_ppl / bytes_per_token, each with full-scatter and frontier-only versions)
+
+Useful option:
+
+- `--avg-ppl-range "7.6~8.2"` to constrain analysis/plotting to a PPL window
 
 ## Documentation
 

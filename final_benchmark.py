@@ -37,8 +37,7 @@ def main() -> None:
     ## SVD (approx + niter=6) + Bitsqz + Topk (0.001) | different uv_formats (10)
     ## ErrorCorrection (approx + niter=6) + Bitsqz + Topk (0.001) | different uv_formats (10) + error_correction_ratios (5) -> (50)
 
-    # UV_FORMATS = ["FP16", "BF16", "Q8_0", "MXFP8", "FP8", "Q4_0", "NF4", "MXFP4", "NF4_DQ", "Q2_K"]
-    UV_FORMATS = ["FP16"]
+    UV_FORMATS = ["FP16", "BF16", "Q8_0", "MXFP8", "FP8", "Q4_0", "NF4", "MXFP4", "NF4_DQ", "Q2_K"]
     RANK=512
     OUTLIER_RATIO=0.001
     FMT_S="fp32"

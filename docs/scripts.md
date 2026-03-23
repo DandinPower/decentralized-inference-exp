@@ -1,8 +1,8 @@
 # Scripts: Pre-Built Visualizations
 
-This project includes plotting scripts in `scripts/` to visualize PPL vs communication trade-offs from CSV summaries.
+This project includes plotting scripts in `scripts/` to visualize PPL vs communication trade-offs from CSV summaries and final benchmark JSON runs.
 
-All scripts are offline analytics: they read CSV files and save figures. They do not run model inference.
+All scripts are offline analytics: they read benchmark outputs and save figures. They do not run model inference.
 
 ## Input CSV Expectations
 
@@ -17,7 +17,7 @@ The plotting scripts expect columns like:
 - `eval_time_s`
 - `status`
 
-Default CSV path used by scripts:
+Default CSV path used by the OnlineSVD plotting scripts:
 
 - `results/onlinesvd_bitsqueeze/onlinesvd_bitsqueeze_ppl_20260226_221024.csv`
 
@@ -89,10 +89,55 @@ python -u scripts/plot_onlinesvd_mode_pareto_time.py \
 
 Even though the script also loads `eval_time_s`, the plotted frontier in this script is still `bytes_per_token` vs `avg_ppl`.
 
+## 4) Final Benchmark Family Pareto
+
+Script: `scripts/plot_final_benchmark_pareto.py`
+
+Purpose:
+
+- aggregate the latest `run_*.json` from each approach directory under final benchmark families
+- compare Pareto frontiers across four families:
+  - `bitsqz_only`
+  - `bitsqz_topk_0_001`
+  - `svd_bitsqz_topk_0_001`
+  - `error_correction`
+- x-axis: `bytes_per_token`, y-axis: `avg_ppl`
+
+Input layout expected by default:
+
+- `results/Qwen/Qwen3.5-9B/bitsqz/.../run_*.json`
+- `results/Qwen/Qwen3.5-9B/bitsqz_topk/.../run_*.json`
+- `results/Qwen/Qwen3.5-9B/svd_bitsqz_topk/.../run_*.json`
+- `results/Qwen/Qwen3.5-9B/error_correction/.../run_*.json`
+
+Example:
+
+```bash
+python -u scripts/plot_final_benchmark_pareto.py \
+  --results-dir results/Qwen/Qwen3.5-9B
+```
+
+Optional filters/outputs:
+
+- `--avg-ppl-range "7.6~8.2"` to keep only rows inside a PPL window
+- `--output-figure <path>` to set the base output figure name
+- `--output-csv <path>` to set the consolidated CSV path
+
+Generated artifacts:
+
+- one consolidated CSV (default: `pareto_final_benchmark_data.csv`)
+- six figure variants from the base output path:
+  - full-scatter + frontier (labels: approach name)
+  - full-scatter + frontier (labels: avg_ppl)
+  - full-scatter + frontier (labels: bytes_per_token)
+  - frontier-only (labels: approach name)
+  - frontier-only (labels: avg_ppl)
+  - frontier-only (labels: bytes_per_token)
+
 ## Output
 
-All scripts save the figure to `--output` and print:
+All scripts save figures and print:
 
-- output path
+- output path(s)
 - filtered point counts
 - number of Pareto points retained per series
