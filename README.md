@@ -11,6 +11,7 @@ The core workflow evaluates two things at the same time:
 The following setup steps are preserved from the original README:
 
 ```bash
+sudo apt install python3-dev
 uv venv
 uv pip install torch --index-url https://download.pytorch.org/whl/cu128
 uv pip install huggingface-hub numpy packaging psutil pyyaml safetensors transformers datasets accelerate bitsandbytes torchao matplotlib

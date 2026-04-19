@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument("--model-dir", type=str, default="/mnt/ssd/liaw/Qwen/Qwen3.5-0.8B")
     parser.add_argument("--result-name", type=str, default="Qwen/Qwen3.5-0.8B")
     parser.add_argument(
-        "--dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"]
+        "--dtype", type=str, default="fp32", choices=["fp32", "fp16", "bf16"]
     )
     parser.add_argument("--first-k-tokens", type=int, default=0)
     parser.add_argument("--batch-windows", type=int, default=2)
@@ -35,7 +35,7 @@ def main() -> None:
     Q_OVERSAMPLE=0  # for approx
     ERROR_CORRECTION_RATIO=0.001  # for error correction
     RANK_RATIO=[0.4, 0.35,0.30,0.25, 0.25, 0.2, 0.15, 0.1]
-    CTX_LEN_STRIDE_PAIRS=[(512, 256), (1024, 512), (2048, 512), (4096, 512), (8192, 512)]
+    CTX_LEN_STRIDE_PAIRS=[(8192, 512), (4096, 512), (2048, 512), (1024, 512), (512, 256)]
 
     result_dir = f"results/{result_name}/lctx_robustness_baseline"
     cases = []
