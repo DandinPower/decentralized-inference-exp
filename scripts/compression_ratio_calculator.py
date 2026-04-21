@@ -47,7 +47,7 @@ if __name__ == "__main__":
     FEATURE_DIMENSION = 5120 # qwen3-32b
     QUANTIZATION_BITS = 4.12515 # nf4_dq
     OUTLIER_SEPARATION_TOPK_RATIO = 0.001
-    ERROR_CORRECTION_TOPK_RATIO = 0.01
+    ERROR_CORRECTION_TOPK_RATIO = 0.001
 
     answers = []
     for ctx_length in CONTEXT_LENGTH:
