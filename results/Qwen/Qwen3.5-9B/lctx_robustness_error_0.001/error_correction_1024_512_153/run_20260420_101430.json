@@ -1,0 +1,52 @@
+{
+  "script_name": "eval_ppl.py",
+  "run_id": "20260420_101430",
+  "timestamp_local": "2026-04-20 10:14:30",
+  "time_run_s": 176.1593005657196,
+  "time_run_hms": "2m 56s",
+  "args": {
+    "model_name": "Qwen/Qwen3.5-9B",
+    "model_dir": "Qwen/Qwen3.5-9B",
+    "dtype": "bf16",
+    "load_in_8bit": true,
+    "load_in_4bit": false,
+    "compressor": "OutlierSeparationOnlineSVD_trunc_approx_153_niter2_qov0_out0.001_ec0.001_uv-nf4_dq_s-fp32",
+    "max_length": 1024,
+    "stride": 512,
+    "first_k_tokens": 0,
+    "batch_windows": 2
+  },
+  "results": {
+    "avg_ppl": 18.124448098128532,
+    "total_nll": 861043.0141601562,
+    "total_loss_tokens": 297192
+  },
+  "traffic_totals": {
+    "total_bytes": 1052732480.0,
+    "total_tokens": 2375680.0,
+    "total_tx": 1160.0,
+    "bytes_per_token": 443.12890625
+  },
+  "traffic_per_link": {
+    "layer:3:node0->node1:OutlierSeparationOnlineSVD_trunc_approx_153_niter2_qov0_out0.001_ec0.001_uv-nf4_dq_s-fp32": {
+      "bytes": 263183120,
+      "tokens": 593920,
+      "tx": 290
+    },
+    "layer:11:node1->node2:OutlierSeparationOnlineSVD_trunc_approx_153_niter2_qov0_out0.001_ec0.001_uv-nf4_dq_s-fp32": {
+      "bytes": 263183120,
+      "tokens": 593920,
+      "tx": 290
+    },
+    "layer:19:node2->node3:OutlierSeparationOnlineSVD_trunc_approx_153_niter2_qov0_out0.001_ec0.001_uv-nf4_dq_s-fp32": {
+      "bytes": 263183120,
+      "tokens": 593920,
+      "tx": 290
+    },
+    "layer:27:node3->node0:OutlierSeparationOnlineSVD_trunc_approx_153_niter2_qov0_out0.001_ec0.001_uv-nf4_dq_s-fp32": {
+      "bytes": 263183120,
+      "tokens": 593920,
+      "tx": 290
+    }
+  }
+}
