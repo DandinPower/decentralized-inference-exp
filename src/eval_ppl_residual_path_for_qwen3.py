@@ -279,29 +279,29 @@ def install_boundary_hooks(
     residual_pipeline: Pipeline,
 ):
     handles = []
-    embed = model.model.embed_tokens
     layers = model.model.layers
     for where, src, dst in boundaries:
         norm_key = f"{where}:{src}->{dst}:{norm_pipeline.compressor.name}"
         residual_key = f"{where}:{src}->{dst}:{residual_pipeline.compressor.name}"
         if where == "embed":
-            # handles.append(embed.register_forward_hook(make_hook(pipeline, key)))
-            raise NotImplementedError("Didn't support embed output hook!")
+            i = 0
         elif where.startswith("layer:"):
             i = (
                 int(where.split(":")[1]) + 1
             )  # plus one because we inject hook on next layer input rather than current layer output
-            # if i > 10:  # TEST, current loss maybe because i impact early layer?
-            handles.append(
-                layers[i].input_layernorm.register_forward_pre_hook(
-                    make_norm_pre_hook(norm_pipeline, norm_key)
-                )
+        else:
+            continue
+        # if i > 10:  # TEST, current loss maybe because i impact early layer?
+        handles.append(
+            layers[i].input_layernorm.register_forward_pre_hook(
+                make_norm_pre_hook(norm_pipeline, norm_key)
             )
-            handles.append(
-                layers[i].attn_residual_add.register_forward_pre_hook(
-                    make_residual_pre_hook(residual_pipeline, residual_key)
-                )
+        )
+        handles.append(
+            layers[i].attn_residual_add.register_forward_pre_hook(
+                make_residual_pre_hook(residual_pipeline, residual_key)
             )
+        )
     return handles
 
 
@@ -318,33 +318,17 @@ def _input_device(model) -> torch.device:
 
 
 def make_default_plan(num_layers: int):
-    if num_layers <= 0:
-        raise ValueError(f"num_layers must be > 0, got {num_layers}")
+    if num_layers < 4:
+        raise ValueError(f"num_layers must be >= 4, got {num_layers}")
     embed_node = output_node = "node0"
     base = num_layers // 4
-    rem = num_layers % 4
-    c0 = base
-    c1 = base + (1 if rem >= 1 else 0)
-    c2 = base + (1 if rem >= 2 else 0)
-    c3 = base + (1 if rem >= 3 else 0)
-    e = c0 // 2
-    l = c0 - e
-    layer_to_node = [""] * num_layers
-    for i in range(e):
-        layer_to_node[i] = "node0"
-    for i in range(num_layers - l, num_layers):
-        layer_to_node[i] = "node0"
-    mid = [i for i, v in enumerate(layer_to_node) if not v]
-    k = 0
-    for _ in range(c1):
-        layer_to_node[mid[k]] = "node1"
-        k += 1
-    for _ in range(c2):
-        layer_to_node[mid[k]] = "node2"
-        k += 1
-    for _ in range(c3):
-        layer_to_node[mid[k]] = "node3"
-        k += 1
+    layer_to_node = ["node0"] * num_layers
+    for i in range(0, base):
+        layer_to_node[i] = "node1"
+    for i in range(base, 2 * base):
+        layer_to_node[i] = "node2"
+    for i in range(2 * base, 3 * base):
+        layer_to_node[i] = "node3"
     return embed_node, layer_to_node, output_node
 
 

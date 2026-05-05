@@ -158,30 +158,17 @@ def _input_device(model) -> torch.device:
         return next(model.parameters()).device
 
 def make_default_plan(num_layers: int):
-    if num_layers <= 0:
-        raise ValueError(f"num_layers must be > 0, got {num_layers}")
+    if num_layers < 4:
+        raise ValueError(f"num_layers must be >= 4, got {num_layers}")
     embed_node = output_node = "node0"
     base = num_layers // 4
-    rem  = num_layers % 4
-    c0 = base
-    c1 = base + (1 if rem >= 1 else 0)
-    c2 = base + (1 if rem >= 2 else 0)
-    c3 = base + (1 if rem >= 3 else 0)
-    e = c0 // 2
-    l = c0 - e
-    layer_to_node = [""] * num_layers
-    for i in range(e):
-        layer_to_node[i] = "node0"
-    for i in range(num_layers - l, num_layers):
-        layer_to_node[i] = "node0"
-    mid = [i for i, v in enumerate(layer_to_node) if not v]
-    k = 0
-    for _ in range(c1):
-        layer_to_node[mid[k]] = "node1"; k += 1
-    for _ in range(c2):
-        layer_to_node[mid[k]] = "node2"; k += 1
-    for _ in range(c3):
-        layer_to_node[mid[k]] = "node3"; k += 1
+    layer_to_node = ["node0"] * num_layers
+    for i in range(0, base):
+        layer_to_node[i] = "node1"
+    for i in range(base, 2 * base):
+        layer_to_node[i] = "node2"
+    for i in range(2 * base, 3 * base):
+        layer_to_node[i] = "node3"
     return embed_node, layer_to_node, output_node
 
 def find_boundaries(embed_node, layer_to_node, output_node):
@@ -424,9 +411,7 @@ def run_ppl_eval(
     embed_node, layer_to_node, output_node = make_default_plan(num_layers)
     boundaries = find_boundaries(embed_node, layer_to_node, output_node)
 
-    print(boundaries)
-    # boundaries = boundaries[:2]
-    # print(boundaries)
+    print(f"Layer boundaries: {boundaries}")
 
     meter = TrafficMeter()
     pipeline = Pipeline(comp, meter)
