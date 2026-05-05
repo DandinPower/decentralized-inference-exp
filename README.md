@@ -21,6 +21,12 @@ cd PyBitSqueeze
 uv pip install -r requirements.txt
 uv pip install . --no-build-isolation
 cd ..
+
+git clone https://github.com/DandinPower/PyBitSqueeze-LLM.git
+cd PyBitSqueeze-LLM
+uv pip install -r requirements.txt
+uv pip install . --no-build-isolation
+cd ..
 ```
 
 ## Project Layout
