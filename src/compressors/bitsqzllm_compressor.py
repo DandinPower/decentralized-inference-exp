@@ -1,5 +1,6 @@
 import threading
 import weakref
+import math
 from typing import Any, Optional, Tuple
 
 import torch
@@ -172,3 +173,130 @@ class BitSqueezeLLMCompressor(Compressor):
         if device_index is None:
             device_index = torch.cuda.current_device()
         return int(device_index)
+
+
+BITSQZ_LLM_ARRAY_BYTES = 200
+QUANTIZATION_CUDA_PACKED_HEADER_BYTES = 48
+TOPK_PACKED_HEADER_BYTES = 8
+NF4_BLOCK_SIZE = 64
+TOPK_INDEX_BYTES = 2
+TOPK_VALUE_BYTES = 4
+FP32_BYTES = 4
+
+def get_topk_ratio_error_topk_ratio_low_rank_ratio_under_svd_nf4dq_scenario(
+    rows: int,
+    cols: int,
+    bits_budget: float,
+    topk_portion: float,
+    error_topk_portion: float,
+) -> tuple[float, float, float]:
+    """
+    Choose ratios that fit a BPW budget for svd_uv_format="NF4_DQ" and
+    svd_s_format="NONE".
+    """
+    def round_half_away_from_zero(value: float) -> int:
+        return math.floor(value + 0.5)
+
+    def ceil_div(numerator: int, denominator: int) -> int:
+        return (numerator + denominator - 1) // denominator
+
+
+    def nf4_dq_packed_size(num_elements: int) -> int:
+        num_blocks = ceil_div(num_elements, NF4_BLOCK_SIZE)
+        data_bytes = ceil_div(num_elements, 2)
+        scale_bytes = num_blocks
+        return QUANTIZATION_CUDA_PACKED_HEADER_BYTES + scale_bytes + data_bytes
+
+
+    def topk_packed_size(rows: int, topk_columns: int) -> int:
+        if topk_columns <= 0:
+            return 0
+        topk_elements = rows * topk_columns
+        return TOPK_PACKED_HEADER_BYTES + topk_elements * (TOPK_INDEX_BYTES + TOPK_VALUE_BYTES)
+
+    def svd_nf4dq_fp32s_packed_size(
+        rows: int,
+        cols: int,
+        topk_columns: int,
+        error_topk_columns: int,
+        rank: int,
+    ) -> int:
+        return (
+            BITSQZ_LLM_ARRAY_BYTES
+            + nf4_dq_packed_size(rows * rank)
+            + FP32_BYTES * rank
+            + nf4_dq_packed_size(cols * rank)
+            + topk_packed_size(rows, topk_columns)
+            + topk_packed_size(rows, error_topk_columns)
+        )
+
+    def validate_budget_inputs(
+        rows: int,
+        cols: int,
+        bits_budget: float,
+        topk_portion: float,
+        error_topk_portion: float,
+    ) -> None:
+        if rows <= 0 or cols <= 0:
+            raise ValueError("rows and cols must be positive")
+        if not math.isfinite(bits_budget) or bits_budget <= 0.0:
+            raise ValueError("bits_budget must be finite and positive")
+        if not math.isfinite(topk_portion) or not math.isfinite(error_topk_portion):
+            raise ValueError("budget portions must be finite")
+        if topk_portion < 0.0 or error_topk_portion < 0.0:
+            raise ValueError("budget portions must be non-negative")
+        if topk_portion + error_topk_portion > 1.0:
+            raise ValueError("topk_portion + error_topk_portion must be <= 1")
+
+    def largest_topk_columns_under_byte_cap(rows: int, cols: int, byte_cap: float) -> int:
+        if byte_cap < TOPK_PACKED_HEADER_BYTES + rows * (TOPK_INDEX_BYTES + TOPK_VALUE_BYTES):
+            return 0
+        columns = math.floor(
+            (byte_cap - TOPK_PACKED_HEADER_BYTES)
+            / (rows * (TOPK_INDEX_BYTES + TOPK_VALUE_BYTES))
+        )
+        return min(cols, max(0, columns))
+    
+    validate_budget_inputs(rows, cols, bits_budget, topk_portion, error_topk_portion)
+
+    budget_bytes = bits_budget * rows * cols / 8.0
+    topk_columns = largest_topk_columns_under_byte_cap(
+        rows,
+        cols,
+        budget_bytes * topk_portion,
+    )
+    error_topk_columns = largest_topk_columns_under_byte_cap(
+        rows,
+        cols,
+        budget_bytes * error_topk_portion,
+    )
+
+    min_rank_size = svd_nf4dq_fp32s_packed_size(
+        rows,
+        cols,
+        topk_columns,
+        error_topk_columns,
+        1,
+    )
+    if min_rank_size > budget_bytes:
+        raise ValueError("bits_budget is too small to fit rank 1 with the selected top-k portions")
+
+    low = 1
+    high = min(rows, cols)
+    best_rank = 1
+    while low <= high:
+        mid = (low + high) // 2
+        packed_size = svd_nf4dq_fp32s_packed_size(
+            rows,
+            cols,
+            topk_columns,
+            error_topk_columns,
+            mid,
+        )
+        if packed_size <= budget_bytes:
+            best_rank = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return topk_columns / cols, error_topk_columns / cols, best_rank / rows

@@ -157,18 +157,18 @@ def _input_device(model) -> torch.device:
     except Exception:
         return next(model.parameters()).device
 
-def make_default_plan(num_layers: int):
-    if num_layers < 4:
-        raise ValueError(f"num_layers must be >= 4, got {num_layers}")
+def make_default_plan(num_layers: int, num_nodes: int = 2) -> Tuple[str, List[str], str]:
+    assert num_nodes >= 2, "num_nodes must be at least 2"
+    assert num_layers >= num_nodes, "num_layers must be at least num_nodes"
     embed_node = output_node = "node0"
-    base = num_layers // 4
     layer_to_node = ["node0"] * num_layers
-    for i in range(0, base):
-        layer_to_node[i] = "node1"
-    for i in range(base, 2 * base):
-        layer_to_node[i] = "node2"
-    for i in range(2 * base, 3 * base):
-        layer_to_node[i] = "node3"
+    layers_per_node = num_layers // num_nodes
+    for i in range(num_layers):
+        node_idx = i // layers_per_node + 1
+        if node_idx >= num_nodes:
+            node_idx = 0
+        layer_to_node[i] = f"node{node_idx}"
+
     return embed_node, layer_to_node, output_node
 
 def find_boundaries(embed_node, layer_to_node, output_node):
