@@ -157,15 +157,15 @@ def _input_device(model) -> torch.device:
     except Exception:
         return next(model.parameters()).device
 
-def make_default_plan(num_layers: int, num_nodes: int = 2) -> Tuple[str, List[str], str]:
-    assert num_nodes >= 2, "num_nodes must be at least 2"
-    assert num_layers >= num_nodes, "num_layers must be at least num_nodes"
+def make_default_plan(num_layers: int, world_size: int) -> Tuple[str, List[str], str]:
+    assert world_size >= 2, "world_size must be at least 2"
+    assert num_layers >= world_size, "num_layers must be at least world_size"
     embed_node = output_node = "node0"
     layer_to_node = ["node0"] * num_layers
-    layers_per_node = num_layers // num_nodes
+    layers_per_node = num_layers // world_size
     for i in range(num_layers):
         node_idx = i // layers_per_node + 1
-        if node_idx >= num_nodes:
+        if node_idx >= world_size:
             node_idx = 0
         layer_to_node[i] = f"node{node_idx}"
 
@@ -359,6 +359,7 @@ def run_ppl_eval(
     stride: int = 512,
     first_k_tokens: int = 0,
     batch_windows: int = 2,
+    world_size: int = 4,
     wandb: bool = True,
     wandb_project: str = "decentralized-infer",
     wandb_run_name: Optional[str] = None,
@@ -408,7 +409,7 @@ def run_ppl_eval(
     model = load_model(model_dir, dtype, load_in_8bit=load8, load_in_4bit=load4)
 
     num_layers = len(model.model.layers)
-    embed_node, layer_to_node, output_node = make_default_plan(num_layers)
+    embed_node, layer_to_node, output_node = make_default_plan(num_layers, world_size)
     boundaries = find_boundaries(embed_node, layer_to_node, output_node)
 
     print(f"Layer boundaries: {boundaries}")
