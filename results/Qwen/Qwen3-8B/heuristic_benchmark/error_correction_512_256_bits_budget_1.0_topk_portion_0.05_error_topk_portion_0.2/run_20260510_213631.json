@@ -1,0 +1,42 @@
+{
+  "script_name": "eval_ppl.py",
+  "run_id": "20260510_213631",
+  "timestamp_local": "2026-05-10 21:36:31",
+  "time_run_s": 141.04420614242554,
+  "time_run_hms": "2m 21s",
+  "args": {
+    "model_name": "Qwen/Qwen3-8B",
+    "model_dir": "/mnt/ssd/liaw/hf_cache/Qwen/Qwen3-8B",
+    "dtype": "bf16",
+    "load_in_8bit": true,
+    "load_in_4bit": false,
+    "compressor": "BitSqueezeLLM",
+    "max_length": 512,
+    "stride": 256,
+    "first_k_tokens": 0,
+    "batch_windows": 1
+  },
+  "results": {
+    "avg_ppl": 25.04559009806737,
+    "total_nll": 963236.626373291,
+    "total_loss_tokens": 299077
+  },
+  "traffic_totals": {
+    "total_bytes": 607122978.0,
+    "total_tokens": 1195660.0,
+    "total_tx": 2336.0,
+    "bytes_per_token": 507.7722579997658
+  },
+  "traffic_per_link": {
+    "embed:node0->node1:BitSqueezeLLM": {
+      "bytes": 303561489,
+      "tokens": 597830,
+      "tx": 1168
+    },
+    "layer:17:node1->node0:BitSqueezeLLM": {
+      "bytes": 303561489,
+      "tokens": 597830,
+      "tx": 1168
+    }
+  }
+}
