@@ -21,8 +21,7 @@ from matplotlib.patches import Patch, Rectangle
 import numpy as np
 
 
-DEFAULT_BENCHMARK_DIR = Path("results/Qwen/Qwen3-8B/heuristic_benchmark")
-DEFAULT_OUTPUT = Path("results/Qwen/Qwen3-8B/8192_bits_budget_0.75_heatmap.png")
+DEFAULT_BENCHMARK_DIR = Path("results/Qwen/Qwen3-8B/heuristic_benchmark_extended")
 OFFLINE_SEARCH_INTERPOLATION_POINTS = 120
 OFFLINE_SEARCH_CMAP = LinearSegmentedColormap.from_list(
     "offline_search_blue_teal_warm",
@@ -44,13 +43,21 @@ POLICY_COLORS = {
 }
 
 RUN_DIR_RE = re.compile(
-    r"^error_correction_"
+    r"^worldsize_\d+_"
     r"(?P<max_length>\d+)_"
     r"(?P<stride>\d+)_"
     r"bits_budget_(?P<bits_budget>\d+(?:\.\d+)?)_"
     r"topk_portion_(?P<topk>\d+(?:\.\d+)?)_"
     r"error_topk_portion_(?P<error>\d+(?:\.\d+)?)$"
 )
+# RUN_DIR_RE = re.compile(
+#     r"^error_correction_"
+#     r"(?P<max_length>\d+)_"
+#     r"(?P<stride>\d+)_"
+#     r"bits_budget_(?P<bits_budget>\d+(?:\.\d+)?)_"
+#     r"topk_portion_(?P<topk>\d+(?:\.\d+)?)_"
+#     r"error_topk_portion_(?P<error>\d+(?:\.\d+)?)$"
+# )
 
 
 @dataclass(frozen=True)
@@ -118,6 +125,26 @@ def parse_args() -> argparse.Namespace:
         "--allow-incomplete",
         action="store_true",
         help="Allow missing topk/error cells and render them as masked cells.",
+    )
+    parser.add_argument(
+        "--max-topk-ratio",
+        type=float,
+        default=None,
+        help=(
+            "Optional inclusive upper bound for top-k/outlier ratio values to "
+            "include in the grid, e.g. 0.25."
+        ),
+    )
+    parser.add_argument(
+        "--max-error-correction-ratio",
+        "--max-error-ratio",
+        dest="max_error_correction_ratio",
+        type=float,
+        default=None,
+        help=(
+            "Optional inclusive upper bound for error-correction ratio values "
+            "to include in the grid, e.g. 0.25."
+        ),
     )
     parser.add_argument(
         "--near-optimal-rel",
@@ -220,34 +247,49 @@ def load_all_rows(benchmark_dir: Path) -> list[BenchmarkRow]:
     return rows
 
 
-# def load_grid_rows(
-#     benchmark_dir: Path,
-#     max_length: int,
-#     stride: int,
-#     bits_budget: float,
-#     allow_incomplete: bool = False,
-# ) -> list[BenchmarkRow]:
-#     rows: list[BenchmarkRow] = []
-#     for row in load_all_rows(benchmark_dir):
-#         if (
-#             row.max_length == max_length
-#             and row.stride == stride
-#             and is_close(row.bits_budget, bits_budget)
-#         ):
-#             rows.append(row)
+def validate_ratio_limit(value: float | None, name: str) -> None:
+    if value is None:
+        return
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be finite and >= 0")
 
-#     if not rows:
-#         raise ValueError(
-#             "No matching benchmark runs found for "
-#             f"max_length={max_length}, stride={stride}, bits_budget={bits_budget}"
-#         )
 
-#     validate_grid(
-#         rows,
-#         allow_incomplete=allow_incomplete,
-#         context=f"L={max_length}, stride={stride}, budget={bits_budget:g}",
-#     )
-#     return rows
+def within_optional_max(value: float, max_value: float | None) -> bool:
+    return max_value is None or value < max_value or is_close(value, max_value)
+
+
+def filter_rows_by_ratio_limits(
+    rows: list[BenchmarkRow],
+    max_topk_ratio: float | None,
+    max_error_correction_ratio: float | None,
+) -> list[BenchmarkRow]:
+    validate_ratio_limit(max_topk_ratio, "--max-topk-ratio")
+    validate_ratio_limit(
+        max_error_correction_ratio,
+        "--max-error-correction-ratio",
+    )
+
+    if max_topk_ratio is None and max_error_correction_ratio is None:
+        return rows
+
+    filtered_rows = [
+        row
+        for row in rows
+        if within_optional_max(row.topk_ratio, max_topk_ratio)
+        and within_optional_max(row.error_ratio, max_error_correction_ratio)
+    ]
+    if not filtered_rows:
+        limits = []
+        if max_topk_ratio is not None:
+            limits.append(f"topk <= {max_topk_ratio:g}")
+        if max_error_correction_ratio is not None:
+            limits.append(f"error_correction <= {max_error_correction_ratio:g}")
+        raise ValueError(
+            "No benchmark rows remain after applying ratio limits: "
+            + ", ".join(limits)
+        )
+
+    return filtered_rows
 
 
 def validate_grid(
@@ -1160,6 +1202,12 @@ def run_all_mode(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows = load_all_rows(args.benchmark_dir)
+    raw_row_count = len(rows)
+    rows = filter_rows_by_ratio_limits(
+        rows,
+        max_topk_ratio=args.max_topk_ratio,
+        max_error_correction_ratio=args.max_error_correction_ratio,
+    )
     rows_by_slice = group_by_slice(rows)
     complete_count = 0
     for key, slice_rows in sorted(
@@ -1221,6 +1269,17 @@ def run_all_mode(args: argparse.Namespace) -> None:
         f"Loaded {len(rows)} runs across {len(rows_by_slice)} slices "
         f"({complete_count} complete)."
     )
+    if len(rows) != raw_row_count:
+        print(
+            f"Applied ratio limits: kept {len(rows)} of {raw_row_count} runs."
+        )
+    if args.max_topk_ratio is not None:
+        print(f"Max top-k/outlier ratio: {args.max_topk_ratio:g}")
+    if args.max_error_correction_ratio is not None:
+        print(
+            "Max error-correction ratio: "
+            f"{args.max_error_correction_ratio:g}"
+        )
     print(
         "Sequence lengths: "
         + ", ".join(str(max_length) for max_length in max_lengths)
